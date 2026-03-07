@@ -16,6 +16,7 @@ export default async function locationRoutes(app: FastifyInstance) {
   app.post("/location/hex", async (req, reply) => {
     const requestId = req.id;
     const log = req.log;
+    const requestStart = process.hrtime.bigint();
 
     try {
       // 1️⃣ Verify token
@@ -50,16 +51,43 @@ export default async function locationRoutes(app: FastifyInstance) {
 
       const { center_hex, neighbor_hexes } = parsed.data;
 
-      // 3️⃣ Fetch previous location
+      // 3️⃣ Fetch previous location (timed)
+      const fetchStart = process.hrtime.bigint();
       const { data: existingUser, error: fetchError } = await supabase
         .from("users")
         .select("h3_cell, h3_neighbors")
         .eq("id", userId)
         .single();
+      const fetchDurationMs =
+        Number(process.hrtime.bigint() - fetchStart) / 1_000_000;
+
+      if (fetchDurationMs > 200) {
+        log.warn(
+          {
+            event: "db_query_slow",
+            operation: "fetch_user_location",
+            userId,
+            requestId,
+            durationMs: fetchDurationMs,
+          },
+          "Slow DB query detected while fetching user location"
+        );
+      }
 
       if (fetchError) {
         log.error(
-          { event: "location_update_failure", userId, requestId },
+          {
+            event: "location_update_failure",
+            userId,
+            requestId,
+            durationMs: fetchDurationMs,
+            fetchError: {
+              message: fetchError.message,
+              details: fetchError.details,
+              hint: fetchError.hint,
+              code: fetchError.code,
+            },
+          },
           "Failed to fetch user for location update"
         );
         return reply.status(500).send({
@@ -88,7 +116,8 @@ export default async function locationRoutes(app: FastifyInstance) {
         "movement computed"
       );
 
-      // 5️⃣ Save to users table
+      // 5️⃣ Save to users table (timed)
+      const updateStart = process.hrtime.bigint();
       const { error } = await supabase
         .from("users")
         .update({
@@ -96,10 +125,30 @@ export default async function locationRoutes(app: FastifyInstance) {
           h3_neighbors: neighbor_hexes,
         })
         .eq("id", userId);
+      const updateDurationMs =
+        Number(process.hrtime.bigint() - updateStart) / 1_000_000;
+
+      if (updateDurationMs > 200) {
+        log.warn(
+          {
+            event: "db_query_slow",
+            operation: "update_user_location",
+            userId,
+            requestId,
+            durationMs: updateDurationMs,
+          },
+          "Slow DB query detected while updating user location"
+        );
+      }
 
       if (error) {
         log.error(
-          { event: "location_update_failure", userId, requestId },
+          {
+            event: "location_update_failure",
+            userId,
+            requestId,
+            durationMs: updateDurationMs,
+          },
           "Failed to update hex location"
         );
         return reply.status(500).send({
@@ -108,8 +157,9 @@ export default async function locationRoutes(app: FastifyInstance) {
         });
       }
 
-      // 6️⃣ Publish location.updated event if movement >= 1 ring
+      // 6️⃣ Publish location.updated event if movement >= 1 ring (timed)
       if (shouldCheckNotifications) {
+        const publishStart = process.hrtime.bigint();
         try {
           await publishLocationUpdated(
             {
@@ -124,13 +174,30 @@ export default async function locationRoutes(app: FastifyInstance) {
             },
             log
           );
+          const publishDurationMs =
+            Number(process.hrtime.bigint() - publishStart) / 1_000_000;
+
+          log.info(
+            {
+              event: "location_update_publish_success",
+              userId,
+              requestId,
+              durationMs: publishDurationMs,
+            },
+            "location.updated event published"
+          );
+
           locationUpdatesTotal.inc();
         } catch (publishErr) {
+          const publishDurationMs =
+            Number(process.hrtime.bigint() - publishStart) / 1_000_000;
+
           log.error(
             {
               event: "location_update_publish_failure",
               userId,
               requestId,
+              durationMs: publishDurationMs,
             },
             "Failed to publish location.updated event"
           );
@@ -141,14 +208,25 @@ export default async function locationRoutes(app: FastifyInstance) {
         }
       }
 
+      const requestDurationMs =
+        Number(process.hrtime.bigint() - requestStart) / 1_000_000;
+
       log.info(
-        { event: "location_update_success", userId, requestId },
+        {
+          event: "location_update_success",
+          userId,
+          requestId,
+          durationMs: requestDurationMs,
+        },
         "location update completed"
       );
       return reply.status(200).send({ success: true });
     } catch (err) {
+      const requestDurationMs =
+        Number(process.hrtime.bigint() - requestStart) / 1_000_000;
+
       log.error(
-        { event: "location_update_error", requestId, err },
+        { event: "location_update_error", requestId, durationMs: requestDurationMs, err },
         "Unexpected error in location update"
       );
       return reply.status(500).send({
