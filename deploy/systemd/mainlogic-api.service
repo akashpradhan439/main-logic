@@ -1,0 +1,18 @@
+[Unit]
+Description=Main Logic API (Fastify)
+After=network-online.target rabbitmq-server.service
+Requires=rabbitmq-server.service
+
+[Service]
+Type=simple
+User=mainlogic
+Group=mainlogic
+WorkingDirectory=/opt/mainlogic
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=2
+Environment=NODE_ENV=production
+EnvironmentFile=-/etc/mainlogic/env
+
+[Install]
+WantedBy=multi-user.target

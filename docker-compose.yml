@@ -1,0 +1,19 @@
+# Local RabbitMQ for development and testing.
+# Run: docker compose up -d
+# Stop: docker compose down
+#
+# AMQP: localhost:5672 (default guest/guest when connecting from localhost)
+# Management UI: http://localhost:15672 (guest / guest)
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: mainlogic-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 5s
+      retries: 5

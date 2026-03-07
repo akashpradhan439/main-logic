@@ -1,0 +1,133 @@
+---
+alwaysApply: true
+---
+
+# Backend Observability Rule
+
+All backend code must follow structured observability practices. The system must provide clear visibility into application behavior using logs, metrics, and error monitoring.
+
+## 1. Structured Logging
+
+* Use **Fastify's built-in Pino logger** for all logging.
+* Do not use `console.log`.
+* Logs must be structured JSON objects.
+* Every important event must include contextual metadata.
+
+Examples of events that must be logged:
+
+* Incoming API requests
+* Location updates (userId, h3 index)
+* Proximity matches detected
+* Notifications sent
+* Notifications skipped (include reason)
+* External API calls (e.g., APNs)
+* Errors and failures
+
+Example:
+
+```js
+fastify.log.info(
+  { userId, h3Index },
+  "location update received"
+)
+```
+
+## 2. Request Observability
+
+* All HTTP requests must be logged automatically by Fastify.
+* Response time should always be available in logs.
+* Each request must have a request ID (`reqId`) for traceability.
+
+## 3. Metrics
+
+The application must expose metrics for monitoring system health.
+
+Metrics should include:
+
+* `location_updates_total`
+* `proximity_matches_total`
+* `notifications_sent_total`
+* `notifications_failed_total`
+* `queue_jobs_total`
+* `queue_failures_total`
+
+Metrics must be implemented using **Prometheus-compatible metrics**.
+
+Expose a metrics endpoint:
+
+```
+GET /metrics
+```
+
+## 4. Error Monitoring
+
+* All uncaught exceptions and critical errors must be reported to an error monitoring system (e.g., Sentry).
+* Errors must include contextual information such as request ID and user ID when available.
+
+Example:
+
+```js
+Sentry.captureException(error)
+```
+
+## 5. Queue Observability
+
+Background job queues (e.g., BullMQ) must track:
+
+* Jobs created
+* Jobs processed
+* Jobs failed
+* Processing latency
+
+Failures must be logged with sufficient context to debug the issue.
+
+## 6. Database Observability
+
+Database operations must log:
+
+* Slow queries
+* Query failures
+* Connection errors
+
+Queries exceeding a defined threshold (e.g., 200ms) should be logged as warnings.
+
+## 7. Correlation IDs
+
+Every request must propagate a **correlation ID** or request ID through:
+
+* API handlers
+* service layers
+* queue jobs
+* notification services
+
+This allows tracing the full lifecycle of a request.
+
+## 8. Logging Principles
+
+Logs must be:
+
+* structured
+* contextual
+* searchable
+* meaningful
+
+Avoid logs that do not provide actionable information.
+
+Bad example:
+
+```
+"Something happened"
+```
+
+Good example:
+
+```
+{ userId: 123, pairKey: "123_456" } "proximity notification sent"
+```
+
+## 9. Performance Logging
+
+Critical operations should log execution time when relevant:
+
+* H3 proximity matching
+* database que

@@ -1,0 +1,16 @@
+export const config = {
+  jwtSecret: process.env.JWT_SECRET || "dev-secret",
+  supabaseUrl: process.env.SUPABASE_URL || "",
+  supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
+  rabbitUrl: process.env.RABBITMQ_URL || "amqp://localhost",
+  rabbitExchange: process.env.RABBITMQ_EXCHANGE || "app.events",
+  locationUpdatedRoutingKey: "location.updated",
+  notificationRoutingKey: "notification.hex_overlap",
+  locationUpdatedQueue: "location-updated-worker",
+  pushNotificationsQueue: "push-notifications",
+  apnsKeyPath: process.env.APNS_KEY_PATH || "",
+  apnsKeyId: process.env.APNS_KEY_ID || "",
+  apnsTeamId: process.env.APNS_TEAM_ID || "",
+  apnsBundleId: process.env.APNS_BUNDLE_ID || "",
+  apnsProduction: process.env.NODE_ENV === "production",
+};
