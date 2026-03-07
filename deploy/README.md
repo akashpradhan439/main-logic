@@ -30,24 +30,28 @@ Then start the API and workers as usual (`npm run dev`, `npm run worker:location
 
 ## Systemd services
 
-1. Create app user and deploy dir (on the VM):
-   ```bash
-   sudo useradd -r -s /bin/false mainlogic
-   sudo mkdir -p /opt/mainlogic
-   # After copying your built app (e.g. dist/, package.json, node_modules):
-   sudo chown -R mainlogic:mainlogic /opt/mainlogic
-   ```
+**Initial setup (run once on the VM):**
 
+1. Install and start RabbitMQ first (see above).
 2. Create env file `/etc/mainlogic/env` (root-readable only) with at least:
    `PORT`, `JWT_SECRET`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `RABBITMQ_URL`, and optionally `APNS_*`, `LOG_LEVEL`.
-
-3. Copy unit files and enable:
    ```bash
-   sudo cp deploy/systemd/*.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   sudo systemctl enable mainlogic-api mainlogic-worker-location mainlogic-worker-notifications
+   sudo touch /etc/mainlogic/env && sudo chmod 600 /etc/mainlogic/env
+   ```
+3. Run the setup script (creates user, `/opt/mainlogic`, installs units, enables and starts services):
+   ```bash
+   sudo ./deploy/setup-services.sh
+   ```
+4. Deploy your built app to `/opt/mainlogic` (e.g. `dist/`, `package.json`, `node_modules`), then:
+   ```bash
+   sudo chown -R mainlogic:mainlogic /opt/mainlogic
    sudo systemctl start mainlogic-api mainlogic-worker-location mainlogic-worker-notifications
    ```
+   If you already deployed before running the script, the script will have started the services for you.
+
+**Manual steps (if you prefer not to use the script):** create user and dir, copy `deploy/systemd/*.service` to `/etc/systemd/system/`, then `daemon-reload`, `enable`, and `start` the three units as above.
+
+The API handles `SIGTERM`/`SIGINT` for graceful shutdown; systemd units use `TimeoutStopSec=30` and `KillSignal=SIGTERM`.
 
 ## Metrics (Prometheus)
 

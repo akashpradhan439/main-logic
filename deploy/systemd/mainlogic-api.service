@@ -11,6 +11,8 @@ WorkingDirectory=/opt/mainlogic
 ExecStart=/usr/bin/node dist/index.js
 Restart=always
 RestartSec=2
+TimeoutStopSec=30
+KillSignal=SIGTERM
 Environment=NODE_ENV=production
 EnvironmentFile=-/etc/mainlogic/env
 
