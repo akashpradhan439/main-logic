@@ -8,6 +8,12 @@ export const locationUpdatesTotal = new Counter({
   registers: [registry],
 });
 
+export const locationUpdatesPublishFailuresTotal = new Counter({
+  name: "location_updates_publish_failures_total",
+  help: "Total failed attempts to publish location updates to the queue",
+  registers: [registry],
+});
+
 export function getMetricsRegistry(): Registry {
   return registry;
 }

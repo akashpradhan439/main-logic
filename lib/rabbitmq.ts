@@ -100,6 +100,89 @@ export async function publishLocationUpdated(
   }
 }
 
+export function scheduleLocationUpdatedRetry(
+  event: LocationUpdatedEvent,
+  log: { info: (obj: object, msg?: string) => void; error: (obj: object, msg?: string) => void },
+  attempt = 1,
+  maxAttempts = 3,
+  baseDelayMs = 500
+): void {
+  if (attempt > maxAttempts) {
+    log.error(
+      {
+        event: "location_update_publish_retry_exhausted",
+        routingKey: config.locationUpdatedRoutingKey,
+        userId: event.userId,
+        requestId: event.requestId,
+        attempt,
+        maxAttempts,
+      },
+      "Exhausted retries for location.updated publish"
+    );
+    return;
+  }
+
+  const delayMs = baseDelayMs * 2 ** (attempt - 1);
+
+  log.info(
+    {
+      event: "location_update_publish_retry_scheduled",
+      routingKey: config.locationUpdatedRoutingKey,
+      userId: event.userId,
+      requestId: event.requestId,
+      attempt,
+      maxAttempts,
+      delayMs,
+    },
+    "Scheduling retry for location.updated publish"
+  );
+
+  setTimeout(() => {
+    publishLocationUpdated(event, log)
+      .then((published) => {
+        if (published) {
+          log.info(
+            {
+              event: "location_update_publish_retry_success",
+              routingKey: config.locationUpdatedRoutingKey,
+              userId: event.userId,
+              requestId: event.requestId,
+              attempt,
+            },
+            "location.updated publish succeeded on retry"
+          );
+          return;
+        }
+
+        log.error(
+          {
+            event: "location_update_publish_retry_failed",
+            routingKey: config.locationUpdatedRoutingKey,
+            userId: event.userId,
+            requestId: event.requestId,
+            attempt,
+          },
+          "location.updated publish returned false on retry"
+        );
+        scheduleLocationUpdatedRetry(event, log, attempt + 1, maxAttempts, baseDelayMs);
+      })
+      .catch((err) => {
+        log.error(
+          {
+            event: "location_update_publish_retry_error",
+            routingKey: config.locationUpdatedRoutingKey,
+            userId: event.userId,
+            requestId: event.requestId,
+            attempt,
+            err,
+          },
+          "RabbitMQ publish error during retry"
+        );
+        scheduleLocationUpdatedRetry(event, log, attempt + 1, maxAttempts, baseDelayMs);
+      });
+  }, delayMs);
+}
+
 export async function publishHexOverlapNotification(
   event: HexOverlapNotificationEvent,
   log: { info: (obj: object, msg?: string) => void; error: (obj: object, msg?: string) => void }

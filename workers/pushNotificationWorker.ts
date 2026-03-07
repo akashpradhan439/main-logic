@@ -16,6 +16,10 @@ const log = pino({
 
 let apnProvider: apn.Provider | null = null;
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function getApnProvider(): apn.Provider | null {
   if (apnProvider) return apnProvider;
   if (!config.apnsKeyPath || !config.apnsKeyId || !config.apnsTeamId || !config.apnsBundleId) {
@@ -63,7 +67,7 @@ function buildHexOverlapAlert(recipientUserId: string, otherUserId: string): str
 
 async function sendHexOverlapNotification(
   event: HexOverlapNotificationEvent
-): Promise<{ sent: boolean; reason?: string }> {
+): Promise<{ sent: boolean; reason?: string; statusCode?: number }> {
   const provider = getApnProvider();
   if (!provider) {
     return { sent: false, reason: "apns_not_configured" };
@@ -94,19 +98,25 @@ async function sendHexOverlapNotification(
 
     if (result.failed.length > 0) {
       const failure = result.failed[0];
-      const statusCode = failure?.response && "status" in failure.response
-        ? (failure.response as { status: number }).status
-        : undefined;
+      const rawStatus =
+        failure?.response && "status" in failure.response
+          ? (failure.response as { status: number }).status
+          : undefined;
       log.error(
         {
           event: "notification_failed",
           userId: event.recipientUserId,
           provider: "apns",
-          statusCode,
+          statusCode: rawStatus,
         },
         "APNs delivery failed"
       );
-      return { sent: false, reason: "delivery_failed" };
+      const resultPayload: { sent: boolean; reason?: string; statusCode?: number } =
+        { sent: false, reason: "delivery_failed" };
+      if (typeof rawStatus === "number") {
+        resultPayload.statusCode = rawStatus;
+      }
+      return resultPayload;
     }
 
     log.info(
@@ -189,19 +199,78 @@ async function main() {
         );
 
         if (event.notificationType === "hex_overlap") {
-          const { sent } = await sendHexOverlapNotification(event);
-          if (sent) {
-            metrics.incNotificationsSent();
-          } else {
-            metrics.incNotificationsFailed();
+          const maxAttempts = 3;
+          let attempt = 1;
+          let delivered = false;
+
+          while (attempt <= maxAttempts) {
+            const { sent, reason, statusCode } = await sendHexOverlapNotification(
+              event
+            );
+
+            if (sent) {
+              metrics.incNotificationsSent();
+              if (attempt > 1) {
+                log.info(
+                  {
+                    ...logCtx,
+                    userId: event.recipientUserId,
+                    attempt,
+                    maxAttempts,
+                  },
+                  "Notification sent after retries"
+                );
+              }
+              delivered = true;
+              break;
+            }
+
+            const isPermanentFailure =
+              reason === "no_device_token" ||
+              reason === "apns_not_configured" ||
+              (reason === "delivery_failed" &&
+                typeof statusCode === "number" &&
+                statusCode >= 400 &&
+                statusCode < 500 &&
+                statusCode !== 429);
+
+            const shouldRetry = !isPermanentFailure && attempt < maxAttempts;
+
+            if (!shouldRetry) {
+              metrics.incNotificationsFailed();
+              log.info(
+                {
+                  ...logCtx,
+                  userId: event.recipientUserId,
+                  attempt,
+                  maxAttempts,
+                  reason,
+                  statusCode,
+                },
+                "Notification skipped after attempts"
+              );
+              break;
+            }
+
+            const delayMs = 500 * 2 ** (attempt - 1);
             log.info(
               {
                 ...logCtx,
                 userId: event.recipientUserId,
-                notificationEnqueued: false,
+                attempt,
+                maxAttempts,
+                delayMs,
+                reason,
+                statusCode,
               },
-              "Notification skipped"
+              "Scheduling notification retry"
             );
+            await sleep(delayMs);
+            attempt += 1;
+          }
+
+          if (!delivered) {
+            // Already counted in metrics and logs above.
           }
         } else {
           log.warn(

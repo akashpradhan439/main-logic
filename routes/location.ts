@@ -1,8 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { publishLocationUpdated } from "../lib/rabbitmq.js";
-import { locationUpdatesTotal } from "../lib/metrics.js";
+import {
+  publishLocationUpdated,
+  scheduleLocationUpdatedRetry,
+} from "../lib/rabbitmq.js";
+import {
+  locationUpdatesTotal,
+  locationUpdatesPublishFailuresTotal,
+} from "../lib/metrics.js";
 import { verifyAccessToken } from "../shared/auth.js";
 import { AuthError } from "../shared/auth.js";
 import { getHexRingDistance } from "../shared/h3.js";
@@ -160,34 +166,47 @@ export default async function locationRoutes(app: FastifyInstance) {
       // 6️⃣ Publish location.updated event if movement >= 1 ring (timed)
       if (shouldCheckNotifications) {
         const publishStart = process.hrtime.bigint();
+        const eventPayload = {
+          userId,
+          centerHex: center_hex,
+          neighborHexes: neighbor_hexes,
+          previousCenterHex,
+          previousNeighborHexes:
+            previousNeighborHexes.length > 0 ? previousNeighborHexes : null,
+          updatedAt: new Date().toISOString(),
+          requestId,
+        };
+
         try {
-          await publishLocationUpdated(
-            {
-              userId,
-              centerHex: center_hex,
-              neighborHexes: neighbor_hexes,
-              previousCenterHex,
-              previousNeighborHexes:
-                previousNeighborHexes.length > 0 ? previousNeighborHexes : null,
-              updatedAt: new Date().toISOString(),
-              requestId,
-            },
-            log
-          );
+          const published = await publishLocationUpdated(eventPayload, log);
           const publishDurationMs =
             Number(process.hrtime.bigint() - publishStart) / 1_000_000;
 
-          log.info(
-            {
-              event: "location_update_publish_success",
-              userId,
-              requestId,
-              durationMs: publishDurationMs,
-            },
-            "location.updated event published"
-          );
+          if (published) {
+            log.info(
+              {
+                event: "location_update_publish_success",
+                userId,
+                requestId,
+                durationMs: publishDurationMs,
+              },
+              "location.updated event published"
+            );
 
-          locationUpdatesTotal.inc();
+            locationUpdatesTotal.inc();
+          } else {
+            log.error(
+              {
+                event: "location_update_publish_failure",
+                userId,
+                requestId,
+                durationMs: publishDurationMs,
+              },
+              "location.updated event publish returned false"
+            );
+            locationUpdatesPublishFailuresTotal.inc();
+            scheduleLocationUpdatedRetry(eventPayload, log);
+          }
         } catch (publishErr) {
           const publishDurationMs =
             Number(process.hrtime.bigint() - publishStart) / 1_000_000;
@@ -201,10 +220,8 @@ export default async function locationRoutes(app: FastifyInstance) {
             },
             "Failed to publish location.updated event"
           );
-          return reply.status(500).send({
-            success: false,
-            error: "Unable to process location update right now",
-          });
+          locationUpdatesPublishFailuresTotal.inc();
+          scheduleLocationUpdatedRetry(eventPayload, log);
         }
       }
 
