@@ -14,6 +14,24 @@ export const locationUpdatesPublishFailuresTotal = new Counter({
   registers: [registry],
 });
 
+export const connectionRequestsTotal = new Counter({
+  name: "connection_requests_total",
+  help: "Total connection requests created",
+  registers: [registry],
+});
+
+export const connectionAcceptsTotal = new Counter({
+  name: "connection_accepts_total",
+  help: "Total connection requests accepted",
+  registers: [registry],
+});
+
+export const connectionBlocksTotal = new Counter({
+  name: "connection_blocks_total",
+  help: "Total connection blocks created",
+  registers: [registry],
+});
+
 export function getMetricsRegistry(): Registry {
   return registry;
 }
