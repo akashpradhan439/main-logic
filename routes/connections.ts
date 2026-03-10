@@ -438,16 +438,10 @@ export default async function connectionsRoutes(app: FastifyInstance) {
         )
         .eq("status", status);
 
-      if (status === "pending") {
-        if (role === "incoming") {
-          query = query.eq("addressee_id", userId);
-        } else if (role === "outgoing") {
-          query = query.eq("requester_id", userId);
-        } else {
-          query = query.or(
-            `requester_id.eq.${userId},addressee_id.eq.${userId}`
-          );
-        }
+      if (role === "incoming") {
+        query = query.eq("addressee_id", userId);
+      } else if (role === "outgoing") {
+        query = query.eq("requester_id", userId);
       } else {
         query = query.or(
           `requester_id.eq.${userId},addressee_id.eq.${userId}`
