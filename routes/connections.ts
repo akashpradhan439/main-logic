@@ -427,7 +427,14 @@ export default async function connectionsRoutes(app: FastifyInstance) {
       let query = supabase
         .from("connections")
         .select(
-          "id, requester_id, addressee_id, status, requester_blocked, addressee_blocked"
+          `id, 
+           requester_id, 
+           addressee_id, 
+           status, 
+           requester_blocked, 
+           addressee_blocked,
+           requester:users!requester_id(first_name, last_name),
+           addressee:users!addressee_id(first_name, last_name)`
         )
         .eq("status", status);
 
@@ -486,16 +493,25 @@ export default async function connectionsRoutes(app: FastifyInstance) {
         });
       }
 
-      const rows = (data as ConnectionRow[] | null) ?? [];
+      type ConnectionWithUsers = ConnectionRow & {
+        requester?: { first_name: string; last_name: string };
+        addressee?: { first_name: string; last_name: string };
+      };
+
+      const rows = (data as unknown as ConnectionWithUsers[] | null) ?? [];
       const connections = rows
         .map((row) => {
           const otherUserId = getOtherUserId(row, userId);
           if (!otherUserId) {
             return null;
           }
+          const otherUser =
+            otherUserId === row.requester_id ? row.requester : row.addressee;
           return {
             connection_id: row.id,
             user_id: otherUserId,
+            first_name: otherUser?.first_name ?? null,
+            last_name: otherUser?.last_name ?? null,
             status: row.status,
           };
         })
@@ -579,7 +595,14 @@ export default async function connectionsRoutes(app: FastifyInstance) {
 
       let query = supabase
         .from("connections")
-        .select("id, requester_id, addressee_id, status")
+        .select(
+          `id, 
+           requester_id, 
+           addressee_id, 
+           status,
+           requester:users!requester_id(first_name, last_name),
+           addressee:users!addressee_id(first_name, last_name)`
+        )
         .eq("status", "pending");
 
       if (role === "incoming") {
@@ -631,16 +654,25 @@ export default async function connectionsRoutes(app: FastifyInstance) {
         });
       }
 
-      const rows = (data as ConnectionRow[] | null) ?? [];
+      type ConnectionWithUsers = ConnectionRow & {
+        requester?: { first_name: string; last_name: string };
+        addressee?: { first_name: string; last_name: string };
+      };
+
+      const rows = (data as unknown as ConnectionWithUsers[] | null) ?? [];
       const connections = rows
         .map((row) => {
           const otherUserId = getOtherUserId(row, userId);
           if (!otherUserId) {
             return null;
           }
+          const otherUser =
+            otherUserId === row.requester_id ? row.requester : row.addressee;
           return {
             connection_id: row.id,
             user_id: otherUserId,
+            first_name: otherUser?.first_name ?? null,
+            last_name: otherUser?.last_name ?? null,
             status: row.status,
           };
         })
