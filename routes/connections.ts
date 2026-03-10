@@ -501,12 +501,22 @@ export default async function connectionsRoutes(app: FastifyInstance) {
           }
           const otherUser =
             otherUserId === row.requester_id ? row.requester : row.addressee;
+
+          let action_text = "";
+          if (row.status === "accepted") {
+            action_text =
+              userId === row.requester_id
+                ? "Request sent by you"
+                : "Received request";
+          }
+
           return {
             connection_id: row.id,
             user_id: otherUserId,
             first_name: otherUser?.first_name ?? null,
             last_name: otherUser?.last_name ?? null,
             status: row.status,
+            action_text: action_text || undefined,
           };
         })
         .filter((x) => x !== null);
