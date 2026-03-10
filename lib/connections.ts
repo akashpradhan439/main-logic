@@ -48,8 +48,6 @@ export async function findConnectionBetweenUsers(
   userIdA: string,
   userIdB: string
 ): Promise<{ row: ConnectionRow | null; error: Error | null }> {
-  const { requesterId, addresseeId } = getCanonicalPair(userIdA, userIdB);
-
   const { data, error } = await client
     .from("connections")
     .select(
@@ -67,33 +65,6 @@ export async function findConnectionBetweenUsers(
 
   const row = (data as ConnectionRow | null) ?? null;
 
-  if (!row) {
-    return { row: null, error: null };
-  }
-
-  if (
-    row.requester_id === requesterId &&
-    row.addressee_id === addresseeId
-  ) {
-    return { row, error: null };
-  }
-
-  const { data: updated, error: updateError } = await client
-    .from("connections")
-    .update({
-      requester_id: requesterId,
-      addressee_id: addresseeId,
-    })
-    .eq("id", row.id)
-    .select(
-      "id, requester_id, addressee_id, status, requester_blocked, addressee_blocked, updated_at"
-    )
-    .single();
-
-  if (updateError) {
-    return { row, error: updateError as Error };
-  }
-
-  return { row: updated as ConnectionRow, error: null };
+  return { row, error: null };
 }
 

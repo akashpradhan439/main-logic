@@ -252,8 +252,8 @@ export default async function connectionsRoutes(app: FastifyInstance) {
           const { error: updateError } = await supabase
             .from("connections")
             .update({
-              requester_id: requesterId,
-              addressee_id: addresseeId,
+              requester_id: userId,
+              addressee_id: target_user_id,
               status: "pending",
               requester_blocked: false,
               addressee_blocked: false,
@@ -312,8 +312,8 @@ export default async function connectionsRoutes(app: FastifyInstance) {
       const { error: insertError, data: inserted } = await supabase
         .from("connections")
         .insert({
-          requester_id: requesterId,
-          addressee_id: addresseeId,
+          requester_id: userId,
+          addressee_id: target_user_id,
           status: "pending",
           requester_blocked: false,
           addressee_blocked: false,
