@@ -421,7 +421,7 @@ export default async function connectionsRoutes(app: FastifyInstance) {
         });
       }
 
-      const status = parsed.data.status ?? "accepted";
+      const status = parsed.data.status;
       const role = parsed.data.role ?? "all";
 
       let query = supabase
@@ -435,8 +435,11 @@ export default async function connectionsRoutes(app: FastifyInstance) {
            addressee_blocked,
            requester:users!requester_id(first_name, last_name),
            addressee:users!addressee_id(first_name, last_name)`
-        )
-        .eq("status", status);
+        );
+      
+      if (status) {
+        query = query.eq("status", status);
+      }
 
       if (role === "incoming") {
         query = query.eq("addressee_id", userId);
@@ -529,7 +532,7 @@ export default async function connectionsRoutes(app: FastifyInstance) {
           event: "connection_list_fetched",
           userId,
           requestId,
-          status,
+          status: status || "all",
           role,
           count: connections.length,
           durationMs: requestDurationMs,
