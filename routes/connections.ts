@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { randomUUID } from "crypto";
 import { supabase } from "../lib/supabase.js";
 import {
   connectionRequestsTotal,
@@ -11,9 +12,12 @@ import {
   getCanonicalPair,
   findConnectionBetweenUsers,
   getOtherUserId,
+  getRejectionCooldownState,
   isPairBlocked,
   type ConnectionRow,
 } from "../lib/connections.js";
+import { encryptPayload, serializeEncryptedToken, parseEncryptedToken, decryptPayload } from "../lib/encryption.js";
+import { redisSet, redisExists, redisDel } from "../lib/redis.js";
 
 const SendRequestSchema = z.object({
   target_user_id: z.string().uuid(),
@@ -30,7 +34,615 @@ const BlockBodySchema = z.object({
   target_user_id: z.string().uuid(),
 });
 
-export default async function connectionsRoutes(app: FastifyInstance) {
+const ScanQRTokenSchema = z.object({
+  token: z.string(),
+});
+
+const GenerateQRTokenSchema = z.object({}).strict();
+
+export type ConnectionsRouteDeps = {
+  supabase: typeof supabase;
+  verifyAccessToken: typeof verifyAccessToken;
+  AuthError: typeof AuthError;
+  encryptPayload: typeof encryptPayload;
+  serializeEncryptedToken: typeof serializeEncryptedToken;
+  parseEncryptedToken: typeof parseEncryptedToken;
+  decryptPayload: typeof decryptPayload;
+  redisSet: typeof redisSet;
+  redisExists: typeof redisExists;
+  redisDel: typeof redisDel;
+};
+
+export function createConnectionsRoutes(
+  overrides: Partial<ConnectionsRouteDeps> = {}
+) {
+  const deps: ConnectionsRouteDeps = {
+    supabase,
+    verifyAccessToken,
+    AuthError,
+    encryptPayload,
+    serializeEncryptedToken,
+    parseEncryptedToken,
+    decryptPayload,
+    redisSet,
+    redisExists,
+    redisDel,
+    ...overrides,
+  };
+
+  return async function connectionsRoutes(app: FastifyInstance) {
+    const {
+      supabase,
+      verifyAccessToken,
+      AuthError,
+      encryptPayload,
+      serializeEncryptedToken,
+      parseEncryptedToken,
+      decryptPayload,
+      redisSet,
+      redisExists,
+      redisDel,
+    } = deps;
+  // POST /connections/qr/generate - Generate QR code token for connection requests
+  app.post("/connections/qr/generate", async (req, reply) => {
+    const requestId = req.id;
+    const log = req.log;
+    const requestStart = process.hrtime.bigint();
+
+    try {
+      // Extract and verify access token
+      let userId: string;
+      try {
+        const user = verifyAccessToken(req.headers.authorization);
+        userId = user.sub;
+      } catch (err) {
+        if (err instanceof AuthError) {
+          log.info(
+            { event: "qr_token_generation_auth_failed", requestId },
+            "Authentication failed for QR token generation"
+          );
+          return reply.status(err.status).send({
+            success: false,
+            error: "Authentication required",
+          });
+        }
+        throw err;
+      }
+
+      // Validate request body
+      const parsed = GenerateQRTokenSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          success: false,
+          error: parsed.error.flatten().fieldErrors,
+        });
+      }
+
+      log.info(
+        { event: "qr_token_generation_start", userId, requestId },
+        "QR token generation initiated"
+      );
+
+      try {
+        // Generate nonce for replay attack prevention
+        const nonce = randomUUID();
+
+        // Calculate expiration time (120 seconds from now)
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        const expirationSeconds = nowSeconds + 120;
+
+        // Build payload
+        const payload = {
+          userId,
+          nonce,
+          exp: expirationSeconds,
+        };
+
+        // Encrypt the payload
+        const encryptedData = encryptPayload(payload);
+        const encryptedToken = serializeEncryptedToken(encryptedData);
+
+        // Store nonce in Redis with 120 second TTL
+        const nonceKey = `qr_nonce:${nonce}`;
+        await redisSet(nonceKey, "valid", 120);
+
+        log.info(
+          { event: "qr_token_generated", userId, nonce, requestId },
+          "QR token successfully generated"
+        );
+
+        const durationMs =
+          Number(process.hrtime.bigint() - requestStart) / 1_000_000;
+
+        return reply.status(200).send({
+          success: true,
+          data: {
+            token: encryptedToken,
+            expiresIn: 120, // seconds
+          },
+        });
+      } catch (encryptionError) {
+        log.error(
+          {
+            event: "qr_token_generation_failure",
+            userId,
+            requestId,
+            error: encryptionError instanceof Error ? encryptionError.message : "Unknown error",
+          },
+          "Failed to generate QR token"
+        );
+
+        return reply.status(500).send({
+          success: false,
+          error: "Failed to generate QR token",
+        });
+      }
+    } catch (err) {
+      log.error(
+        {
+          event: "qr_token_generation_error",
+          requestId,
+          error: err instanceof Error ? err.message : "Unknown error",
+        },
+        "Unexpected error during QR token generation"
+      );
+
+      return reply.status(500).send({
+        success: false,
+        error: "An unexpected error occurred",
+      });
+    }
+  });
+
+  // POST /connections/qr/scan - Scan and validate QR code token
+  app.post("/connections/qr/scan", async (req, reply) => {
+    const requestId = req.id;
+    const log = req.log;
+    const requestStart = process.hrtime.bigint();
+
+    try {
+      // Extract and verify access token (scanning user)
+      let userId: string;
+      try {
+        const user = verifyAccessToken(req.headers.authorization);
+        userId = user.sub;
+      } catch (err) {
+        if (err instanceof AuthError) {
+          log.info(
+            { event: "qr_scan_auth_failed", requestId },
+            "Authentication failed for QR scan"
+          );
+          return reply.status(err.status).send({
+            success: false,
+            error: "Authentication required",
+          });
+        }
+        throw err;
+      }
+
+      // Validate request body
+      const parsed = ScanQRTokenSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          success: false,
+          error: parsed.error.flatten().fieldErrors,
+        });
+      }
+
+      const { token } = parsed.data;
+
+      log.info(
+        { event: "qr_scan_start", userId, requestId },
+        "QR code scan initiated"
+      );
+
+      try {
+
+        // Parse and decrypt the token
+        const encryptedData = parseEncryptedToken(token);
+        const payload = decryptPayload(encryptedData) as {
+          userId: string;
+          nonce: string;
+          exp: number;
+        };
+
+        // Validate payload structure
+        if (
+          !payload.userId ||
+          !payload.nonce ||
+          typeof payload.exp !== "number"
+        ) {
+          log.warn(
+            {
+              event: "qr_scan_invalid_payload",
+              userId,
+              requestId,
+            },
+            "Invalid QR token payload structure"
+          );
+          return reply.status(400).send({
+            success: false,
+            error: "Invalid QR token",
+          });
+        }
+
+        // Check expiration
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        if (nowSeconds > payload.exp) {
+          log.warn(
+            {
+              event: "qr_scan_expired",
+              userId,
+              targetUserId: payload.userId,
+              requestId,
+            },
+            "QR token has expired"
+          );
+          return reply.status(400).send({
+            success: false,
+            error: "QR token has expired",
+          });
+        }
+
+        // Verify nonce exists in Redis (hasn't been used)
+        const nonceKey = `qr_nonce:${payload.nonce}`;
+        const nonceExists = await redisExists(nonceKey);
+
+        if (!nonceExists) {
+          log.warn(
+            {
+              event: "qr_scan_invalid_nonce",
+              userId,
+              targetUserId: payload.userId,
+              requestId,
+            },
+            "QR nonce not found or already used"
+          );
+          return reply.status(400).send({
+            success: false,
+            error: "QR token is invalid or has already been used",
+          });
+        }
+
+        const targetUserId = payload.userId;
+
+        // Prevent self-connection
+        if (targetUserId === userId) {
+          log.warn(
+            {
+              event: "qr_scan_self_connection",
+              userId,
+              requestId,
+            },
+            "User attempted to connect to themselves"
+          );
+          return reply.status(400).send({
+            success: false,
+            error: "Cannot connect to yourself",
+          });
+        }
+
+        // Verify target user exists
+        const targetFetchStart = process.hrtime.bigint();
+        const { data: targetUser, error: targetError } = await supabase
+          .from("users")
+          .select("id")
+          .eq("id", targetUserId)
+          .single();
+        const targetFetchDurationMs =
+          Number(process.hrtime.bigint() - targetFetchStart) / 1_000_000;
+
+        if (targetFetchDurationMs > 200) {
+          log.warn(
+            {
+              event: "db_query_slow",
+              operation: "fetch_qr_target_user",
+              userId,
+              targetUserId,
+              requestId,
+              durationMs: targetFetchDurationMs,
+            },
+            "Slow DB query detected while fetching QR target user"
+          );
+        }
+
+        if (targetError || !targetUser) {
+          log.error(
+            {
+              event: "qr_scan_target_not_found",
+              userId,
+              targetUserId,
+              requestId,
+              dbError: targetError
+                ? {
+                    message: targetError.message,
+                    details: targetError.details,
+                    code: targetError.code,
+                  }
+                : null,
+            },
+            "Target user from QR not found"
+          );
+          return reply.status(404).send({
+            success: false,
+            error: "User from QR code not found",
+          });
+        }
+
+        // Mark nonce as used (delete from Redis)
+        await redisDel(nonceKey);
+
+        // Check for existing connection
+        const { row: existing, error: findError } =
+          await findConnectionBetweenUsers(supabase, userId, targetUserId);
+
+        if (findError) {
+          log.error(
+            {
+              event: "qr_scan_connection_check_failed",
+              userId,
+              targetUserId,
+              requestId,
+              error: findError.message,
+            },
+            "Failed to check existing connection"
+          );
+          return reply.status(500).send({
+            success: false,
+            error: "Unable to process QR scan",
+          });
+        }
+
+        const { requesterId, addresseeId } = getCanonicalPair(
+          userId,
+          targetUserId
+        );
+
+        // Check if blocked
+        if (existing && isPairBlocked(existing)) {
+          log.info(
+            {
+              event: "qr_scan_blocked",
+              userId,
+              targetUserId,
+              requestId,
+            },
+            "Connection blocked"
+          );
+          return reply.status(403).send({
+            success: false,
+            error: "Unable to connect with this user",
+          });
+        }
+
+        // Handle existing connection states
+        if (existing) {
+          if (existing.status === "accepted") {
+            log.info(
+              {
+                event: "qr_scan_already_connected",
+                userId,
+                targetUserId,
+                requestId,
+              },
+              "Users already connected"
+            );
+            return reply.status(409).send({
+              success: false,
+              error: "Already connected with this user",
+            });
+          }
+
+          if (existing.status === "pending") {
+            // Accept existing pending request from either side
+            const { error: acceptError } = await supabase
+              .from("connections")
+              .update({
+                status: "accepted",
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", existing.id);
+
+            if (acceptError) {
+              log.error(
+                {
+                  event: "qr_scan_accept_failed",
+                  userId,
+                  targetUserId,
+                  requestId,
+                  error: acceptError.message,
+                },
+                "Failed to accept connection"
+              );
+              return reply.status(500).send({
+                success: false,
+                error: "Failed to process connection",
+              });
+            }
+
+            connectionAcceptsTotal.inc();
+
+            log.info(
+              {
+                event: "qr_scan_accepted",
+                userId,
+                targetUserId,
+                requestId,
+              },
+              "Connection accepted via QR scan"
+            );
+
+            return reply.status(200).send({
+              success: true,
+              data: {
+                message: "Connection accepted",
+                action: "accepted",
+              },
+            });
+          }
+
+          if (existing.status === "rejected") {
+            const scannerIsAddressee = existing.addressee_id === userId;
+            const cooldown = getRejectionCooldownState(existing.updated_at);
+
+            if (!scannerIsAddressee && cooldown.withinCooldown) {
+              log.info(
+                {
+                  event: "qr_scan_conflict",
+                  reason: "rejection_cooldown",
+                  userId,
+                  targetUserId,
+                  requestId,
+                  elapsedMs: cooldown.elapsedMs,
+                },
+                "QR scan blocked by rejection cooldown"
+              );
+              return reply.status(400).send({
+                success: false,
+                error: "Connection request is temporarily disabled after rejection. Please try again later.",
+              });
+            }
+
+            const { error: updateError } = await supabase
+              .from("connections")
+              .update({
+                requester_id: userId,
+                addressee_id: targetUserId,
+                status: "accepted",
+                requester_blocked: false,
+                addressee_blocked: false,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", existing.id);
+
+            if (updateError) {
+              log.error(
+                {
+                  event: "qr_scan_request_failed",
+                  userId,
+                  targetUserId,
+                  requestId,
+                  error: updateError.message,
+                },
+                "Failed to update connection request from rejected"
+              );
+              return reply.status(500).send({
+                success: false,
+                error: "Failed to process connection request",
+              });
+            }
+
+            connectionAcceptsTotal.inc();
+
+            log.info(
+              {
+                event: "qr_scan_accepted_from_rejected",
+                userId,
+                targetUserId,
+                requestId,
+                reusedExistingRow: true,
+                skippedCooldown: scannerIsAddressee,
+              },
+              "Connection accepted via QR scan"
+            );
+
+            return reply.status(200).send({
+              success: true,
+              data: {
+                message: "Connection accepted",
+                action: "accepted",
+                targetUserId,
+              },
+            });
+          }
+        }
+
+        // Create new connection request
+        const { error: insertError } = await supabase
+          .from("connections")
+          .insert({
+            requester_id: requesterId,
+            addressee_id: addresseeId,
+            status: "accepted",
+            created_at: new Date().toISOString(),
+          });
+
+        if (insertError) {
+          log.error(
+            {
+              event: "qr_scan_request_failed",
+              userId,
+              targetUserId,
+              requestId,
+              error: insertError.message,
+            },
+            "Failed to create connection request"
+          );
+          return reply.status(500).send({
+            success: false,
+            error: "Failed to process connection request",
+          });
+        }
+
+        connectionAcceptsTotal.inc();
+
+        log.info(
+          {
+            event: "qr_scan_accepted",
+            userId,
+            targetUserId,
+            requestId,
+          },
+          "Connection accepted via QR"
+        );
+
+        const durationMs =
+          Number(process.hrtime.bigint() - requestStart) / 1_000_000;
+
+        return reply.status(200).send({
+          success: true,
+          data: {
+            message: "Connection accepted",
+            action: "accepted",
+            targetUserId,
+          },
+        });
+      } catch (decryptionError) {
+        log.error(
+          {
+            event: "qr_scan_decryption_failed",
+            userId,
+            requestId,
+            error:
+              decryptionError instanceof Error
+                ? decryptionError.message
+                : "Unknown error",
+          },
+          "Failed to decrypt QR token"
+        );
+
+        return reply.status(400).send({
+          success: false,
+          error: "Invalid QR token",
+        });
+      }
+    } catch (err) {
+      log.error(
+        {
+          event: "qr_scan_error",
+          requestId,
+          error: err instanceof Error ? err.message : "Unknown error",
+        },
+        "Unexpected error during QR scan"
+      );
+
+      return reply.status(500).send({
+        success: false,
+        error: "An unexpected error occurred",
+      });
+    }
+  });
+
   app.post("/connections/requests", async (req, reply) => {
     const requestId = req.id;
     const log = req.log;
@@ -223,15 +835,9 @@ export default async function connectionsRoutes(app: FastifyInstance) {
         }
 
         if (existing.status === "rejected") {
-          const now = Date.now();
-          const updatedAt =
-            existing.updated_at !== null
-              ? new Date(existing.updated_at).getTime()
-              : 0;
-          const elapsedMs = now - updatedAt;
-          const cooldownMs = 3 * 60 * 60 * 1000;
+          const cooldown = getRejectionCooldownState(existing.updated_at);
 
-          if (existing.updated_at !== null && elapsedMs < cooldownMs) {
+          if (cooldown.withinCooldown) {
             log.info(
               {
                 event: "connection_request_conflict",
@@ -239,13 +845,13 @@ export default async function connectionsRoutes(app: FastifyInstance) {
                 userId,
                 targetUserId: target_user_id,
                 requestId,
-                elapsedMs,
+                elapsedMs: cooldown.elapsedMs,
               },
               "Connection request blocked by rejection cooldown"
             );
             return reply.status(400).send({
               success: false,
-              error: "Unable to send connection request right now",
+              error: "Connection request is temporarily disabled after rejection. Please try again later.",
             });
           }
 
@@ -693,7 +1299,7 @@ export default async function connectionsRoutes(app: FastifyInstance) {
           event: "connection_list_fetched",
           userId,
           requestId,
-          status: "pending",
+          status: "accepted",
           role,
           count: connections.length,
           durationMs: requestDurationMs,
@@ -1930,4 +2536,6 @@ export default async function connectionsRoutes(app: FastifyInstance) {
     }
   });
 }
+}
 
+export default createConnectionsRoutes();

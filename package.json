@@ -12,7 +12,7 @@
     "worker:notifications": "tsx workers/pushNotificationWorker.ts",
     "worker:location:prod": "node dist/workers/locationUpdatedWorker.js",
     "worker:notifications:prod": "node dist/workers/pushNotificationWorker.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test --import tsx tests/connections-qr-scan.test.ts"
   },
   "author": "",
   "license": "ISC",
@@ -29,6 +29,7 @@
     "h3-js": "^4.4.0",
     "jsonwebtoken": "^9.0.3",
     "prom-client": "^15.1.3",
+    "redis": "^4.6.14",
     "zod": "^4.3.6"
   },
   "devDependencies": {

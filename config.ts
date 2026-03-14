@@ -13,4 +13,6 @@ export const config = {
   apnsTeamId: process.env.APNS_TEAM_ID || "",
   apnsBundleId: process.env.APNS_BUNDLE_ID || "",
   apnsProduction: process.env.NODE_ENV === "production",
+  redisUrl: process.env.REDIS_URL || "redis://localhost:6379",
+  qrEncryptionKey: process.env.QR_ENCRYPTION_KEY || "",
 };

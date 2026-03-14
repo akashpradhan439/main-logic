@@ -12,6 +12,27 @@ export interface ConnectionRow {
   updated_at: string | null;
 }
 
+export const REJECTION_COOLDOWN_MS = 3 * 60 * 60 * 1000;
+
+export function getRejectionCooldownState(
+  updatedAt: string | null,
+  nowMs: number = Date.now(),
+  cooldownMs: number = REJECTION_COOLDOWN_MS
+): { withinCooldown: boolean; elapsedMs: number | null; cooldownMs: number } {
+  if (updatedAt === null) {
+    return { withinCooldown: false, elapsedMs: null, cooldownMs };
+  }
+
+  const updatedAtMs = new Date(updatedAt).getTime();
+  const elapsedMs = nowMs - updatedAtMs;
+
+  if (!Number.isFinite(elapsedMs)) {
+    return { withinCooldown: false, elapsedMs: null, cooldownMs };
+  }
+
+  return { withinCooldown: elapsedMs < cooldownMs, elapsedMs, cooldownMs };
+}
+
 export function getCanonicalPair(
   userIdA: string,
   userIdB: string
