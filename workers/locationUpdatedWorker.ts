@@ -21,7 +21,7 @@ const LOCATION_UPDATED_QUEUE = config.locationUpdatedQueue;
 function getSortedPair(a: string, b: string): [string, string] {
   return a < b ? [a, b] : [b, a];
 }
-
+//a comment for triggering deployment
 function hexesOverlap(
   callerCenter: string,
   callerNeighbors: string[],
