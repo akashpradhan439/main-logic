@@ -167,7 +167,7 @@ export function createConnectionsRoutes(
             event: "qr_token_generation_failure",
             userId,
             requestId,
-            error: encryptionError instanceof Error ? encryptionError.message : "Unknown error",
+            error: "Failed to process encryption for connection token",
           },
           "Failed to generate QR token"
         );
@@ -182,7 +182,7 @@ export function createConnectionsRoutes(
         {
           event: "qr_token_generation_error",
           requestId,
-          error: err instanceof Error ? err.message : "Unknown error",
+          error: "An unexpected error occurred during QR token generation",
         },
         "Unexpected error during QR token generation"
       );
@@ -383,7 +383,7 @@ export function createConnectionsRoutes(
               userId,
               targetUserId,
               requestId,
-              error: findError.message,
+              error: "A database error occurred",
             },
             "Failed to check existing connection"
           );
@@ -450,7 +450,7 @@ export function createConnectionsRoutes(
                   userId,
                   targetUserId,
                   requestId,
-                  error: acceptError.message,
+                  error: "A database error occurred during connection acceptance",
                 },
                 "Failed to accept connection"
               );
@@ -522,7 +522,7 @@ export function createConnectionsRoutes(
                   userId,
                   targetUserId,
                   requestId,
-                  error: updateError.message,
+                  error: "A database error occurred while updating connection status",
                 },
                 "Failed to update connection request from rejected"
               );
@@ -574,7 +574,7 @@ export function createConnectionsRoutes(
               userId,
               targetUserId,
               requestId,
-              error: insertError.message,
+              error: "A database error occurred while creating connection request",
             },
             "Failed to create connection request"
           );
@@ -631,7 +631,7 @@ export function createConnectionsRoutes(
         {
           event: "qr_scan_error",
           requestId,
-          error: err instanceof Error ? err.message : "Unknown error",
+          error: "An unexpected error occurred",
         },
         "Unexpected error during QR scan"
       );
@@ -746,7 +746,7 @@ export function createConnectionsRoutes(
             userId,
             targetUserId: target_user_id,
             requestId,
-            error: findError.message,
+            error: "A database error occurred",
           },
           "Failed to fetch existing connection row"
         );
@@ -2141,7 +2141,7 @@ export function createConnectionsRoutes(
             userId,
             targetUserId: target_user_id,
             requestId,
-            error: findError.message,
+            error: "A database error occurred",
           },
           "Failed to fetch existing connection row for block"
         );
@@ -2370,7 +2370,7 @@ export function createConnectionsRoutes(
             userId,
             targetUserId: target_user_id,
             requestId,
-            error: findError.message,
+            error: "A database error occurred",
           },
           "Failed to fetch existing connection row for unblock"
         );
