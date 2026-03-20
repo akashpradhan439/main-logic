@@ -1,4 +1,5 @@
 #!/bin/bash
+exec > >(tee -a /opt/mainlogic-deploy.log) 2>&1
 # ----------------------------------------------------------------------
 # This is a Git post-receive hook to be placed on the Oracle Server
 # Location: /opt/mainlogic.git/hooks/post-receive
