@@ -151,7 +151,28 @@ async function main() {
     "Push notification worker starting"
   );
 
-  const connection = await amqp.connect(config.rabbitUrl);
+  let connection;
+  let attempt = 1;
+  const maxAttempts = 10;
+  const delayMs = 3000;
+
+  while (attempt <= maxAttempts) {
+    try {
+      connection = await amqp.connect(config.rabbitUrl);
+      break;
+    } catch (err) {
+      if (attempt === maxAttempts) throw err;
+      log.warn(
+        { attempt, maxAttempts, delayMs, err: (err as Error).message },
+        "Failed to connect to RabbitMQ, retrying..."
+      );
+      await sleep(delayMs);
+      attempt++;
+    }
+  }
+
+  if (!connection) throw new Error("Could not establish RabbitMQ connection");
+
   const channel = await connection.createChannel();
 
   await channel.assertExchange(config.rabbitExchange, "topic", { durable: true });
@@ -164,7 +185,7 @@ async function main() {
 
   await channel.consume(
     config.pushNotificationsQueue,
-    async (msg) => {
+    async (msg: amqp.ConsumeMessage | null) => {
       if (!msg) return;
 
       const requestId =

@@ -34,7 +34,10 @@ export interface NewMessageEvent {
 let connection: ChannelModel | null = null;
 let channel: Channel | null = null;
 
-export async function getChannel(): Promise<Channel> {
+export async function getChannel(): Promise<Channel | null> {
+  if (config.skipRabbitMQ) {
+    return null;
+  }
   if (channel != null) {
     return channel;
   }
@@ -54,7 +57,8 @@ export async function getChannel(): Promise<Channel> {
   } catch (err) {
     connection = null;
     channel = null;
-    throw err;
+    console.warn("RabbitMQ connection failed, but skipping is not explicitly enabled. Falling back to no-op.");
+    return null;
   }
 }
 
@@ -64,6 +68,10 @@ export async function publishLocationUpdated(
 ): Promise<boolean> {
   try {
     const ch = await getChannel();
+    if (!ch) {
+      log.info({ event: "rabbit_skip", userId: event.userId }, "Skipping RabbitMQ publish (location.updated)");
+      return true;
+    }
     const payload = Buffer.from(JSON.stringify(event));
     const published = ch.publish(
       config.rabbitExchange,
@@ -201,6 +209,10 @@ export async function publishHexOverlapNotification(
 ): Promise<boolean> {
   try {
     const ch = await getChannel();
+    if (!ch) {
+      log.info({ event: "rabbit_skip", recipientUserId: event.recipientUserId }, "Skipping RabbitMQ publish (notification.hex_overlap)");
+      return true;
+    }
     const payload = Buffer.from(JSON.stringify(event));
     const published = ch.publish(
       config.rabbitExchange,
@@ -256,6 +268,10 @@ export async function publishNewMessage(
 ): Promise<boolean> {
   try {
     const ch = await getChannel();
+    if (!ch) {
+      log.info({ event: "rabbit_skip", conversationId: event.conversationId }, "Skipping RabbitMQ publish (messaging.new)");
+      return true;
+    }
     const payload = Buffer.from(JSON.stringify(event));
     const published = ch.publish(
       config.rabbitExchange,

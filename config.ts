@@ -2,7 +2,7 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET || "dev-secret",
   supabaseUrl: process.env.SUPABASE_URL || "",
   supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
-  rabbitUrl: process.env.RABBITMQ_URL || "amqp://localhost",
+  rabbitUrl: process.env.RABBITMQ_URL || process.env.AMQP_URL || "amqp://localhost",
   rabbitExchange: process.env.RABBITMQ_EXCHANGE || "app.events",
   locationUpdatedRoutingKey: "location.updated",
   notificationRoutingKey: "notification.hex_overlap",
@@ -17,4 +17,5 @@ export const config = {
   apnsProduction: process.env.NODE_ENV === "production",
   redisUrl: process.env.REDIS_URL || "redis://localhost:6379",
   qrEncryptionKey: process.env.QR_ENCRYPTION_KEY || "",
+  skipRabbitMQ: process.env.SKIP_RABBITMQ === "true",
 };

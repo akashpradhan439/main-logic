@@ -43,13 +43,38 @@ function hexesOverlap(
   return { overlaps: false, overlapHex: null };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function main() {
   const metrics = createWorkerMetrics("location");
   const metricsPort = Number(process.env.METRICS_PORT) || 9091;
   metrics.startMetricsServer(metricsPort);
   log.info({ event: "worker_start", queue: LOCATION_UPDATED_QUEUE, metricsPort }, "Location worker starting");
 
-  const connection = await amqp.connect(config.rabbitUrl);
+  let connection;
+  let attempt = 1;
+  const maxAttempts = 10;
+  const delayMs = 3000;
+
+  while (attempt <= maxAttempts) {
+    try {
+      connection = await amqp.connect(config.rabbitUrl);
+      break;
+    } catch (err) {
+      if (attempt === maxAttempts) throw err;
+      log.warn(
+        { attempt, maxAttempts, delayMs, err: (err as Error).message },
+        "Failed to connect to RabbitMQ, retrying..."
+      );
+      await sleep(delayMs);
+      attempt++;
+    }
+  }
+
+  if (!connection) throw new Error("Could not establish RabbitMQ connection");
+  
   const channel = await connection.createChannel();
 
   await channel.assertExchange(config.rabbitExchange, "topic", { durable: true });
