@@ -54,6 +54,19 @@ services:
       - AMQP_URL=amqp://guest:guest@rabbitmq:5672
     command: ["npm", "run", "worker:notifications:prod"]
 
+  worker-messaging:
+    build: .
+    container_name: mainlogic-worker-messaging
+    restart: always
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - AMQP_URL=amqp://guest:guest@rabbitmq:5672
+    command: ["npm", "run", "worker:messaging:prod"]
+
   nginx:
     image: nginx:alpine
     container_name: mainlogic-nginx

@@ -10,9 +10,11 @@
     "start": "node dist/index.js",
     "worker:location": "tsx workers/locationUpdatedWorker.ts",
     "worker:notifications": "tsx workers/pushNotificationWorker.ts",
+    "worker:messaging": "tsx workers/messagingWorker.ts",
     "worker:location:prod": "node dist/workers/locationUpdatedWorker.js",
     "worker:notifications:prod": "node dist/workers/pushNotificationWorker.js",
-    "test": "node --test --import tsx tests/connections-qr-scan.test.ts"
+    "worker:messaging:prod": "node dist/workers/messagingWorker.js",
+    "test": "node --test --import tsx tests/connections-qr-scan.test.ts tests/messaging.test.ts"
   },
   "author": "",
   "license": "ISC",

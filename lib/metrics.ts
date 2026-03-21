@@ -32,6 +32,30 @@ export const connectionBlocksTotal = new Counter({
   registers: [registry],
 });
 
+export const messagesSentTotal = new Counter({
+  name: "messages_sent_total",
+  help: "Total messages sent",
+  registers: [registry],
+});
+
+export const messagesPublishFailuresTotal = new Counter({
+  name: "messages_publish_failures_total",
+  help: "Total failed RabbitMQ publishes for offline message delivery",
+  registers: [registry],
+});
+
+export const wsConnectionsTotal = new Counter({
+  name: "ws_connections_total",
+  help: "Total WebSocket connections opened",
+  registers: [registry],
+});
+
+export const wsDisconnectsTotal = new Counter({
+  name: "ws_disconnects_total",
+  help: "Total WebSocket disconnections",
+  registers: [registry],
+});
+
 export function getMetricsRegistry(): Registry {
   return registry;
 }

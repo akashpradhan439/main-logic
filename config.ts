@@ -8,6 +8,8 @@ export const config = {
   notificationRoutingKey: "notification.hex_overlap",
   locationUpdatedQueue: "location-updated-worker",
   pushNotificationsQueue: "push-notifications",
+  messagingRoutingKey: "messaging.new",
+  messagingQueue: "messaging-offline-push",
   apnsKeyPath: process.env.APNS_KEY_PATH || "",
   apnsKeyId: process.env.APNS_KEY_ID || "",
   apnsTeamId: process.env.APNS_TEAM_ID || "",

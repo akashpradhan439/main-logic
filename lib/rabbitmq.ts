@@ -19,6 +19,18 @@ export interface HexOverlapNotificationEvent {
   requestId?: string;
 }
 
+export interface NewMessageEvent {
+  conversationId: string;
+  messageId: string;
+  senderId: string;
+  recipientId: string;
+  content: string | null;
+  attachmentUrl: string | null;
+  attachmentType: string | null;
+  createdAt: string;
+  requestId?: string;
+}
+
 let connection: ChannelModel | null = null;
 let channel: Channel | null = null;
 
@@ -233,6 +245,65 @@ export async function publishHexOverlapNotification(
         success: false,
       },
       "RabbitMQ publish error"
+    );
+    throw err;
+  }
+}
+
+export async function publishNewMessage(
+  event: NewMessageEvent,
+  log: { info: (obj: object, msg?: string) => void; error: (obj: object, msg?: string) => void }
+): Promise<boolean> {
+  try {
+    const ch = await getChannel();
+    const payload = Buffer.from(JSON.stringify(event));
+    const published = ch.publish(
+      config.rabbitExchange,
+      config.messagingRoutingKey,
+      payload,
+      {
+        persistent: true,
+        contentType: "application/json",
+        headers: event.requestId ? { requestId: event.requestId } : undefined,
+      }
+    );
+    if (published) {
+      log.info(
+        {
+          event: "rabbit_publish",
+          routingKey: config.messagingRoutingKey,
+          conversationId: event.conversationId,
+          messageId: event.messageId,
+          senderId: event.senderId,
+          recipientId: event.recipientId,
+          requestId: event.requestId,
+          success: true,
+        },
+        "messaging.new published"
+      );
+      return true;
+    }
+    log.error(
+      {
+        event: "rabbit_publish",
+        routingKey: config.messagingRoutingKey,
+        conversationId: event.conversationId,
+        messageId: event.messageId,
+        success: false,
+      },
+      "Failed to publish messaging.new"
+    );
+    return false;
+  } catch (err) {
+    log.error(
+      {
+        event: "rabbit_publish",
+        routingKey: config.messagingRoutingKey,
+        conversationId: event.conversationId,
+        messageId: event.messageId,
+        success: false,
+      },
+      "RabbitMQ publish error for messaging.new"
     );
     throw err;
   }

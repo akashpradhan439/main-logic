@@ -1,7 +1,7 @@
 import http from "node:http";
 import { Registry, Counter } from "prom-client";
 
-export type WorkerName = "location" | "notifications";
+export type WorkerName = "location" | "notifications" | "messaging";
 
 function createWorkerRegistry(worker: WorkerName): {
   registry: Registry;
@@ -45,7 +45,7 @@ function createWorkerRegistry(worker: WorkerName): {
     });
   }
 
-  if (worker === "notifications") {
+  if (worker === "notifications" || worker === "messaging") {
     out.notificationsSentTotal = new Counter({
       name: "notifications_sent_total",
       help: "Total push notifications sent successfully",
