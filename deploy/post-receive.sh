@@ -33,11 +33,14 @@ if npm test; then
     # since it's typically gitignored. Make sure you copy your server 
     # .env file to /opt/mainlogic/ manually once.
     
-    docker compose -f docker-compose.prod.yml up -d --build
-    
-    echo "==========================================="
-    echo " Deployment Successful! "
-    echo "==========================================="
+    if docker compose -f docker-compose.prod.yml up -d --build; then
+        echo "==========================================="
+        echo " Deployment Successful! "
+        echo "==========================================="
+    else
+        echo "-> Docker Compose Build Failed! Aborting Deployment."
+        exit 1
+    fi
 else
     echo "-> Tests Failed! Aborting Deployment."
     echo "-> Rolling back changes is not strictly needed as containers weren't restarted."

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.git/
+worker_err.log
+utf8_err.log
+*.log
+docker-compose*.yml
+deploy/
+tests/
