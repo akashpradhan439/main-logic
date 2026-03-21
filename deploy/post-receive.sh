@@ -15,6 +15,14 @@ echo "============================================="
 
 # 1. Checkout the latest code into TARGET_DIR
 echo "-> Checking out latest code to $TARGET_DIR..."
+
+# Check available RAM (important for Oracle Free Tier)
+FREE_RAM=$(free -m | awk '/^Mem:/{print $4}')
+if [ "$FREE_RAM" -lt 500 ]; then
+    echo "WARNING: Low memory detected ($FREE_RAM MB). Build may fail."
+    echo "Consider adding a swap file if this persists."
+fi
+
 mkdir -p $TARGET_DIR
 git --work-tree=$TARGET_DIR --git-dir=$GIT_DIR checkout -f main
 

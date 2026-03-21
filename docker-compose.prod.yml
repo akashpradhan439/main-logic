@@ -16,6 +16,7 @@ services:
 
   api:
     build: .
+    image: mainlogic-app:latest
     container_name: mainlogic-api
     restart: always
     depends_on:
@@ -24,47 +25,53 @@ services:
     env_file:
       - .env
     environment:
-      # Override the AMQP URL to use the internal docker network hostname "rabbitmq" instead of localhost
-      - AMQP_URL=amqp://guest:guest@rabbitmq:5672
+      # Use RABBITMQ_URL consistently with config.ts
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
     command: ["npm", "start"]
 
   worker-location:
-    build: .
+    image: mainlogic-app:latest
     container_name: mainlogic-worker-location
     restart: always
     depends_on:
       rabbitmq:
         condition: service_healthy
+      api:
+        condition: service_started
     env_file:
       - .env
     environment:
-      - AMQP_URL=amqp://guest:guest@rabbitmq:5672
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
     command: ["npm", "run", "worker:location:prod"]
 
   worker-notifications:
-    build: .
+    image: mainlogic-app:latest
     container_name: mainlogic-worker-notifications
     restart: always
     depends_on:
       rabbitmq:
         condition: service_healthy
+      api:
+        condition: service_started
     env_file:
       - .env
     environment:
-      - AMQP_URL=amqp://guest:guest@rabbitmq:5672
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
     command: ["npm", "run", "worker:notifications:prod"]
 
   worker-messaging:
-    build: .
+    image: mainlogic-app:latest
     container_name: mainlogic-worker-messaging
     restart: always
     depends_on:
       rabbitmq:
         condition: service_healthy
+      api:
+        condition: service_started
     env_file:
       - .env
     environment:
-      - AMQP_URL=amqp://guest:guest@rabbitmq:5672
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
     command: ["npm", "run", "worker:messaging:prod"]
 
   nginx:
