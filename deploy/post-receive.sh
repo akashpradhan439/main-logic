@@ -41,7 +41,7 @@ if npm test; then
     # since it's typically gitignored. Make sure you copy your server 
     # .env file to /opt/mainlogic/ manually once.
     
-    if docker compose -f docker-compose.prod.yml up -d --build; then
+    if DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose -f docker-compose.prod.yml up -d --build; then
         echo "==========================================="
         echo " Deployment Successful! "
         echo "==========================================="

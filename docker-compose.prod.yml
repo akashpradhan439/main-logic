@@ -30,6 +30,7 @@ services:
     command: ["npm", "start"]
 
   worker-location:
+    build: .
     image: mainlogic-app:latest
     container_name: mainlogic-worker-location
     restart: always
@@ -45,6 +46,7 @@ services:
     command: ["npm", "run", "worker:location:prod"]
 
   worker-notifications:
+    build: .
     image: mainlogic-app:latest
     container_name: mainlogic-worker-notifications
     restart: always
@@ -60,6 +62,7 @@ services:
     command: ["npm", "run", "worker:notifications:prod"]
 
   worker-messaging:
+    build: .
     image: mainlogic-app:latest
     container_name: mainlogic-worker-messaging
     restart: always
