@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { findConnectionBetweenUsers, isPairBlocked } from "./connections.js";
 
 export interface ConversationRow {
   id: string;
@@ -194,13 +195,18 @@ export async function getConversationMessages(
 }
 
 /**
- * Verifies a user is a participant in a conversation.
+ * Verifies a user is a participant in a conversation and checks if they are blocked.
  */
 export async function verifyConversationParticipant(
   client: SupabaseClient,
   conversationId: string,
   userId: string
-): Promise<{ isParticipant: boolean; conversation: ConversationRow | null; error: Error | null }> {
+): Promise<{ 
+  isParticipant: boolean; 
+  isBlocked: boolean;
+  conversation: ConversationRow | null; 
+  error: Error | null 
+}> {
   const { data, error } = await client
     .from("conversations")
     .select("id, participant_one, participant_two, created_at, updated_at")
@@ -208,10 +214,24 @@ export async function verifyConversationParticipant(
     .single();
 
   if (error) {
-    return { isParticipant: false, conversation: null, error: error as unknown as Error };
+    return { isParticipant: false, isBlocked: false, conversation: null, error: error as unknown as Error };
   }
 
   const conv = data as ConversationRow;
   const isParticipant = conv.participant_one === userId || conv.participant_two === userId;
-  return { isParticipant, conversation: conv, error: null };
+  
+  if (!isParticipant) {
+    return { isParticipant: false, isBlocked: false, conversation: conv, error: null };
+  }
+
+  // Check if blocked
+  const otherUserId = conv.participant_one === userId ? conv.participant_two : conv.participant_one;
+  const { row: connection, error: connError } = await findConnectionBetweenUsers(client, userId, otherUserId);
+
+  if (connError) {
+    return { isParticipant: true, isBlocked: false, conversation: conv, error: connError };
+  }
+
+  const blocked = isPairBlocked(connection);
+  return { isParticipant: true, isBlocked: blocked, conversation: conv, error: null };
 }

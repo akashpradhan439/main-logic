@@ -9,7 +9,7 @@ import {
   wsConnectionsTotal,
   wsDisconnectsTotal,
 } from "../lib/metrics.js";
-import { verifyAccessToken, AuthError } from "../shared/auth.js";
+import { verifyAccessToken, signWsToken, verifyWsToken, AuthError } from "../shared/auth.js";
 import {
   findOrCreateConversation,
   insertMessage,
@@ -19,7 +19,7 @@ import {
   type ConversationRow,
   type MessageRow,
 } from "../lib/messaging.js";
-import { findConnectionBetweenUsers } from "../lib/connections.js";
+import { findConnectionBetweenUsers, isPairBlocked } from "../lib/connections.js";
 import { redisSet, redisDel, redisGet } from "../lib/redis.js";
 
 // ─── Zod Schemas ──────────────────────────────────────────────────────────────
@@ -57,8 +57,11 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 export type MessagingRouteDeps = {
   supabase: typeof supabase;
   verifyAccessToken: typeof verifyAccessToken;
+  signWsToken: typeof signWsToken;
+  verifyWsToken: typeof verifyWsToken;
   AuthError: typeof AuthError;
   findConnectionBetweenUsers: typeof findConnectionBetweenUsers;
+  isPairBlocked: typeof isPairBlocked;
   findOrCreateConversation: typeof findOrCreateConversation;
   insertMessage: typeof insertMessage;
   getConversationMessages: typeof getConversationMessages;
@@ -76,8 +79,11 @@ export function createMessagingRoutes(
   const deps: MessagingRouteDeps = {
     supabase,
     verifyAccessToken,
+    signWsToken,
+    verifyWsToken,
     AuthError,
     findConnectionBetweenUsers,
+    isPairBlocked,
     findOrCreateConversation,
     insertMessage,
     getConversationMessages,
@@ -94,8 +100,11 @@ export function createMessagingRoutes(
     const {
       supabase,
       verifyAccessToken,
+      signWsToken,
+      verifyWsToken,
       AuthError,
       findConnectionBetweenUsers,
+      isPairBlocked,
       findOrCreateConversation,
       insertMessage,
       getConversationMessages,
@@ -105,6 +114,34 @@ export function createMessagingRoutes(
       redisSet,
       redisDel,
     } = deps;
+
+    // ─── REST: WS Token ──────────────────────────────────────────────────
+
+    app.post("/messaging/ws-token", async (req, reply) => {
+      const requestId = req.id;
+      const log = req.log;
+
+      try {
+        let userId: string;
+        try {
+          const user = verifyAccessToken(req.headers.authorization);
+          userId = user.sub;
+        } catch (err) {
+          if (err instanceof AuthError) {
+            return reply.status(err.status).send({ success: false, error: "Authentication required" });
+          }
+          throw err;
+        }
+
+        const token = signWsToken(userId);
+        log.info({ event: "ws_token_generated", userId, requestId }, "WS token generated");
+
+        return reply.status(200).send({ success: true, token });
+      } catch (err) {
+        log.error({ event: "ws_token_error", requestId, err }, "Error generating WS token");
+        return reply.status(500).send({ success: false, error: "Unable to generate token" });
+      }
+    });
 
     // ─── REST: Create / Get Conversation ──────────────────────────────────
 
@@ -155,7 +192,7 @@ export function createMessagingRoutes(
           return reply.status(500).send({ success: false, error: "Unable to create conversation right now" });
         }
 
-        if (!connection || connection.status !== "accepted") {
+        if (!connection || connection.status !== "accepted" || isPairBlocked(connection)) {
           return reply.status(403).send({ success: false, error: "You must be connected with this user to message them" });
         }
 
@@ -267,8 +304,8 @@ export function createMessagingRoutes(
           throw err;
         }
 
-        // Verify user is a participant
-        const { isParticipant, error: verifyError } = await verifyConversationParticipant(
+        // Verify user is a participant and not blocked
+        const { isParticipant, isBlocked, error: verifyError } = await verifyConversationParticipant(
           supabase, conversationId, userId
         );
 
@@ -282,6 +319,10 @@ export function createMessagingRoutes(
 
         if (!isParticipant) {
           return reply.status(403).send({ success: false, error: "You are not a participant in this conversation" });
+        }
+
+        if (isBlocked) {
+          return reply.status(403).send({ success: false, error: "You cannot view messages for this conversation" });
         }
 
         const parsed = MessageHistoryQuerySchema.safeParse(req.query);
@@ -329,17 +370,24 @@ export function createMessagingRoutes(
       const requestId = req.id;
       const log = req.log;
 
-      // Authenticate via query parameter (WebSocket cannot use headers from mobile)
+      // Authenticate via short-lived WS token
       const url = new URL(req.url, `http://${req.headers.host}`);
       const token = url.searchParams.get("token");
       let userId: string;
 
+      if (!token) {
+        log.info({ event: "ws_auth_no_token", requestId }, "WebSocket connection attempt with no token");
+        socket.send(JSON.stringify({ type: "error", message: "Authentication token required" }));
+        socket.close(4001, "Token required");
+        return;
+      }
+
       try {
-        const user = verifyAccessToken(`Bearer ${token}`);
-        userId = user.sub;
-      } catch {
-        log.info({ event: "ws_auth_failed", requestId }, "WebSocket authentication failed");
-        socket.send(JSON.stringify({ type: "error", message: "Authentication failed" }));
+        const payload = verifyWsToken(token);
+        userId = payload.sub;
+      } catch (err) {
+        log.info({ event: "ws_auth_failed", requestId, err }, "WebSocket authentication failed");
+        socket.send(JSON.stringify({ type: "error", message: "Invalid or expired token" }));
         socket.close(4001, "Authentication failed");
         return;
       }
@@ -416,8 +464,8 @@ export function createMessagingRoutes(
             "WebSocket message received"
           );
 
-          // Verify sender is participant
-          const { isParticipant, conversation, error: verifyError } = await verifyConversationParticipant(
+          // Verify sender is participant and not blocked
+          const { isParticipant, isBlocked, conversation, error: verifyError } = await verifyConversationParticipant(
             supabase, conversationId, userId
           );
 
@@ -425,6 +473,14 @@ export function createMessagingRoutes(
             socket.send(JSON.stringify({
               type: "error",
               message: "You are not a participant in this conversation",
+            }));
+            return;
+          }
+
+          if (isBlocked) {
+            socket.send(JSON.stringify({
+              type: "error",
+              message: "You cannot send messages to this user",
             }));
             return;
           }
