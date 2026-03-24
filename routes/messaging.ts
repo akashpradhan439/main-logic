@@ -256,7 +256,15 @@ export function createMessagingRoutes(
 
         const { data, error } = await supabase
           .from("conversations")
-          .select("id, participant_one, participant_two, created_at, updated_at")
+          .select(`
+            id, 
+            participant_one, 
+            participant_two, 
+            created_at, 
+            updated_at,
+            p1:users!participant_one(first_name, last_name),
+            p2:users!participant_two(first_name, last_name)
+          `)
           .or(`participant_one.eq.${userId},participant_two.eq.${userId}`)
           .order("updated_at", { ascending: false });
 
@@ -269,11 +277,15 @@ export function createMessagingRoutes(
         }
 
         const conversations = (data ?? []).map((conv: any) => {
-          const otherUserId =
-            conv.participant_one === userId ? conv.participant_two : conv.participant_one;
+          const isP1 = conv.participant_one === userId;
+          const otherUserId = isP1 ? conv.participant_two : conv.participant_one;
+          const otherUserProfile = isP1 ? conv.p2 : conv.p1;
+
           return {
             id: conv.id,
             otherUserId,
+            otherUserFirstName: otherUserProfile?.first_name || null,
+            otherUserLastName: otherUserProfile?.last_name || null,
             createdAt: conv.created_at,
             updatedAt: conv.updated_at,
           };
