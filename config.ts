@@ -18,4 +18,5 @@ export const config = {
   redisUrl: process.env.REDIS_URL || "redis://localhost:6379",
   qrEncryptionKey: process.env.QR_ENCRYPTION_KEY || "",
   skipRabbitMQ: process.env.SKIP_RABBITMQ === "true",
+  skipRedis: process.env.SKIP_REDIS === "true",
 };

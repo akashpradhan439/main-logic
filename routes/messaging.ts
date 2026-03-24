@@ -127,6 +127,10 @@ export function createMessagingRoutes(
 
     // Set up Redis Subscriber for cross-instance SSE notifications
     createRedisSubClient().then((subClient) => {
+      if (!subClient) {
+        app.log.info({ event: "sse_redis_skip" }, "Skipping Redis subscriber for SSE (Redis disabled or unavailable)");
+        return;
+      }
       subClient.subscribe("conversation_updated", (message) => {
         try {
           const { userIds } = JSON.parse(message);
@@ -240,6 +244,7 @@ export function createMessagingRoutes(
 
         if (created) {
           getRedisClient().then((redis) => {
+            if (!redis) return;
             redis.publish("conversation_updated", JSON.stringify({ userIds: [userId, otherUserId] }));
           }).catch((err) => {
             log.error({ event: "sse_publish_error", err }, "Failed to publish conversation update to Redis");
@@ -599,6 +604,7 @@ export function createMessagingRoutes(
 
           // Trigger SSE update via Redis
           getRedisClient().then((redis) => {
+            if (!redis) return;
             redis.publish("conversation_updated", JSON.stringify({ userIds: [userId, recipientId] }));
           }).catch((err) => {
             log.error({ event: "sse_publish_error", err }, "Failed to publish conversation update to Redis");
