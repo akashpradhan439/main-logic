@@ -214,7 +214,16 @@ export function createMessagingRoutes(
           "Conversation ready"
         );
 
-        return reply.status(created ? 201 : 200).send({ success: true, conversation });
+        // Unified response format
+        return reply.status(created ? 201 : 200).send({
+          success: true,
+          conversation: {
+            id: conversation.id,
+            otherUserId,
+            createdAt: conversation.created_at,
+            updatedAt: conversation.updated_at,
+          }
+        });
       } catch (err) {
         const requestDurationMs = Number(process.hrtime.bigint() - requestStart) / 1_000_000;
         log.error(
@@ -259,7 +268,7 @@ export function createMessagingRoutes(
           return reply.status(500).send({ success: false, error: "Unable to list conversations right now" });
         }
 
-        const conversations = (data ?? []).map((conv: Record<string, unknown>) => {
+        const conversations = (data ?? []).map((conv: any) => {
           const otherUserId =
             conv.participant_one === userId ? conv.participant_two : conv.participant_one;
           return {

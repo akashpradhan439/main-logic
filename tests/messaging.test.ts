@@ -226,6 +226,7 @@ test("Create conversation: success - new conversation created", async () => {
   const body = res.json();
   assert.equal(body.success, true);
   assert.equal(body.conversation.id, scenario.conversationId);
+  assert.equal(body.conversation.otherUserId, scenario.otherUserId);
   await app.close();
 });
 
