@@ -141,3 +141,21 @@ Establishes a WebSocket connection for real-time messaging.
   "message": "You cannot send messages to this user"
 }
 ```
+
+---
+
+## 📻 Real-time Conversation Updates (SSE)
+
+### GET `/messaging/conversations/stream?token=<wsToken>`
+Stays connected to receive real-time updates when the conversation list changes.
+
+**Handshake**
+- `token`: Short-lived token obtained via `POST /messaging/ws-token`.
+
+**Events**
+- `type: "conversation_updated"`: Sent when a new message arrives in any conversation or a new conversation is created.
+
+**Payload Example**
+```json
+{ "type": "conversation_updated" }
+```

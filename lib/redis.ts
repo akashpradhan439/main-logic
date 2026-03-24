@@ -54,3 +54,20 @@ export async function redisDel(key: string): Promise<void> {
   const client = await getRedisClient();
   await client.del(key);
 }
+
+/**
+ * Creates a separate Redis client for Pub/Sub subscription.
+ * Subscriber clients cannot be used for regular commands.
+ */
+export async function createRedisSubClient(): Promise<ReturnType<typeof createClient>> {
+  const client = createClient({
+    url: config.redisUrl,
+  });
+
+  client.on("error", (err) => {
+    console.error("Redis Sub Client Error", err);
+  });
+
+  await client.connect();
+  return client;
+}

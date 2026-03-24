@@ -75,12 +75,88 @@ const supabaseStub = {
   from(table: string) {
     if (table === "conversations") {
       return {
-        select() {
+        select(query?: string) {
           return {
             or() {
               return {
                 async order() {
                   return { data: scenario.conversations, error: scenario.conversationsError };
+                },
+              };
+            },
+            eq() {
+              return {
+                eq() {
+                  return {
+                    async maybeSingle() {
+                      return { data: scenario.conversations[0] || null, error: scenario.conversationsError };
+                    },
+                  };
+                },
+                async single() {
+                  return { data: scenario.conversations[0] || null, error: scenario.conversationsError };
+                },
+              };
+            },
+            async single() {
+              return { data: scenario.conversations[0] || null, error: scenario.conversationsError };
+            },
+          };
+        },
+        async update() {
+          return { error: null };
+        },
+        async insert() {
+          return {
+            select() {
+              return {
+                async single() {
+                  return { data: scenario.conversations[0] || null, error: null };
+                },
+              };
+            },
+          };
+        },
+      };
+    }
+    if (table === "messages") {
+      return {
+        insert() {
+          return {
+            select() {
+              return {
+                async single() {
+                  return { data: makeMessage(), error: null };
+                },
+              };
+            },
+          };
+        },
+        select() {
+          return {
+            eq() {
+              return {
+                order() {
+                  return {
+                    async limit() {
+                      return { data: scenario.messagesResult.messages, error: scenario.messagesResult.error };
+                    },
+                  };
+                },
+              };
+            },
+          };
+        },
+      };
+    }
+    if (table === "users") {
+      return {
+        select() {
+          return {
+            eq() {
+              return {
+                async single() {
+                  return { data: { id: scenario.otherUserId }, error: null };
                 },
               };
             },
@@ -257,6 +333,43 @@ test("Create conversation: 403 - user is soft blocked", async () => {
   });
 
   assert.equal(res.statusCode, 403);
+  await app.close();
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GET /messaging/conversations
+// ═══════════════════════════════════════════════════════════════════════════════
+
+test("List conversations: success", async () => {
+  const conv = makeConversation();
+  // Mock the joined profiles
+  (conv as any).p1 = { first_name: "John", last_name: "Doe" };
+  (conv as any).p2 = { first_name: "Jane", last_name: "Smith" };
+
+  scenario.conversations = [conv];
+
+  const app = await buildApp();
+  const res = await app.inject({
+    method: "GET",
+    url: "/messaging/conversations",
+    headers: { authorization: "Bearer test" },
+  });
+
+  assert.equal(res.statusCode, 200);
+  const body = res.json();
+  assert.equal(body.success, true);
+  assert.equal(body.conversations.length, 1);
+  
+  const conversation = body.conversations[0];
+  assert.equal(conversation.id, scenario.conversationId);
+  
+  // Verify user names
+  // Since requester is userId and addressee is otherUserId, and userId < otherUserId
+  // participant_one = userId, participant_two = otherUserId
+  // isP1 = true, so otherUserProfile should be conv.p2 (Jane Smith)
+  assert.equal(conversation.otherUserFirstName, "Jane");
+  assert.equal(conversation.otherUserLastName, "Smith");
+  
   await app.close();
 });
 

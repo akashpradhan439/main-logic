@@ -20,7 +20,8 @@ import {
   type MessageRow,
 } from "../lib/messaging.js";
 import { findConnectionBetweenUsers, isPairBlocked } from "../lib/connections.js";
-import { redisSet, redisDel, redisGet } from "../lib/redis.js";
+import { redisSet, redisDel, redisGet, createRedisSubClient, getRedisClient } from "../lib/redis.js";
+import { SSEManager } from "../lib/sse.js";
 
 // ─── Zod Schemas ──────────────────────────────────────────────────────────────
 
@@ -71,6 +72,8 @@ export type MessagingRouteDeps = {
   redisSet: typeof redisSet;
   redisDel: typeof redisDel;
   redisGet: typeof redisGet;
+  createRedisSubClient: typeof createRedisSubClient;
+  getRedisClient: typeof getRedisClient;
 };
 
 export function createMessagingRoutes(
@@ -93,6 +96,8 @@ export function createMessagingRoutes(
     redisSet,
     redisDel,
     redisGet,
+    createRedisSubClient,
+    getRedisClient,
     ...overrides,
   };
 
@@ -113,7 +118,26 @@ export function createMessagingRoutes(
       publishNewMessage,
       redisSet,
       redisDel,
+      createRedisSubClient,
+      getRedisClient,
     } = deps;
+
+    // ─── SSE Manager ──────────────────────────────────────────────────────
+    const sseManager = new SSEManager();
+
+    // Set up Redis Subscriber for cross-instance SSE notifications
+    createRedisSubClient().then((subClient) => {
+      subClient.subscribe("conversation_updated", (message) => {
+        try {
+          const { userIds } = JSON.parse(message);
+          sseManager.notifyUsers(userIds, { type: "conversation_updated" });
+        } catch (err) {
+          app.log.error({ event: "sse_redis_parse_error", err }, "Failed to parse Redis message for SSE");
+        }
+      });
+    }).catch((err) => {
+      app.log.error({ event: "sse_redis_sub_error", err }, "Failed to initialize Redis subscriber for SSE");
+    });
 
     // ─── REST: WS Token ──────────────────────────────────────────────────
 
@@ -214,6 +238,14 @@ export function createMessagingRoutes(
           "Conversation ready"
         );
 
+        if (created) {
+          getRedisClient().then((redis) => {
+            redis.publish("conversation_updated", JSON.stringify({ userIds: [userId, otherUserId] }));
+          }).catch((err) => {
+            log.error({ event: "sse_publish_error", err }, "Failed to publish conversation update to Redis");
+          });
+        }
+
         // Unified response format
         return reply.status(created ? 201 : 200).send({
           success: true,
@@ -303,6 +335,32 @@ export function createMessagingRoutes(
           "Unexpected error listing conversations"
         );
         return reply.status(500).send({ success: false, error: "Unable to list conversations right now" });
+      }
+    });
+
+    // ─── SSE: Conversation List Updates ───────────────────────────────────
+
+    app.get("/messaging/conversations/stream", async (req, reply) => {
+      const requestId = req.id;
+      const log = req.log;
+
+      try {
+        let userId: string;
+        try {
+          const user = verifyAccessToken(req.headers.authorization);
+          userId = user.sub;
+        } catch (err) {
+          if (err instanceof AuthError) {
+            return reply.status(err.status).send({ success: false, error: "Authentication required" });
+          }
+          throw err;
+        }
+
+        log.info({ event: "sse_connect", userId, requestId }, "SSE connection established");
+        sseManager.addClient(userId, reply);
+      } catch (err) {
+        log.error({ event: "sse_connect_error", requestId, err }, "Error establishing SSE connection");
+        return reply.status(500).send({ success: false, error: "Unable to establish stream" });
       }
     });
 
@@ -538,6 +596,13 @@ export function createMessagingRoutes(
             );
             return;
           }
+
+          // Trigger SSE update via Redis
+          getRedisClient().then((redis) => {
+            redis.publish("conversation_updated", JSON.stringify({ userIds: [userId, recipientId] }));
+          }).catch((err) => {
+            log.error({ event: "sse_publish_error", err }, "Failed to publish conversation update to Redis");
+          });
 
           // Construct outgoing message payload
           const outgoingPayload = {
