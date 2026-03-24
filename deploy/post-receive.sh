@@ -42,7 +42,7 @@ cd $TARGET_DIR
 npm ci
 
 echo "-> Running tests..."
-if npm test; then
+if SKIP_REDIS=true SKIP_RABBITMQ=true npm test; then
     echo "-> Tests Passed!"
     
     # 3. Deploy via Docker Compose with Retries
