@@ -350,15 +350,22 @@ export function createMessagingRoutes(
       const log = req.log;
 
       try {
+        // Authenticate via short-lived WS token
+        const url = new URL(req.url, `http://${req.headers.host}`);
+        const token = url.searchParams.get("token");
+
+        if (!token) {
+          log.info({ event: "sse_auth_no_token", requestId }, "SSE connection attempt with no token");
+          return reply.status(401).send({ success: false, error: "Authentication token required" });
+        }
+
         let userId: string;
         try {
-          const user = verifyAccessToken(req.headers.authorization);
-          userId = user.sub;
+          const payload = verifyWsToken(token);
+          userId = payload.sub;
         } catch (err) {
-          if (err instanceof AuthError) {
-            return reply.status(err.status).send({ success: false, error: "Authentication required" });
-          }
-          throw err;
+          log.info({ event: "sse_auth_failed", requestId, err }, "SSE authentication failed");
+          return reply.status(401).send({ success: false, error: "Invalid or expired token" });
         }
 
         log.info({ event: "sse_connect", userId, requestId }, "SSE connection established");

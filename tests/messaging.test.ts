@@ -409,6 +409,38 @@ test("Get messages: 403 - blocked", async () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// GET /messaging/conversations/stream
+// ═══════════════════════════════════════════════════════════════════════════════
+
+test("SSE Stream: 401 with missing token", async () => {
+  const app = await buildApp();
+  const res = await app.inject({
+    method: "GET",
+    url: "/messaging/conversations/stream",
+  });
+
+  assert.equal(res.statusCode, 401);
+  const body = res.json();
+  assert.equal(body.success, false);
+  assert.equal(body.error, "Authentication token required");
+  await app.close();
+});
+
+test("SSE Stream: 401 with invalid token", async () => {
+  const app = await buildApp();
+  const res = await app.inject({
+    method: "GET",
+    url: "/messaging/conversations/stream?token=invalid-token",
+  });
+
+  assert.equal(res.statusCode, 401);
+  const body = res.json();
+  assert.equal(body.success, false);
+  assert.equal(body.error, "Invalid or expired token");
+  await app.close();
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Unit tests for lib/messaging.ts pure functions
 // ═══════════════════════════════════════════════════════════════════════════════
 
