@@ -138,8 +138,12 @@ const supabaseStub = {
               return {
                 order() {
                   return {
-                    async limit() {
-                      return { data: scenario.messagesResult.messages, error: scenario.messagesResult.error };
+                    limit() {
+                      return {
+                        async maybeSingle() {
+                          return { data: scenario.messagesResult.messages[0] || null, error: scenario.messagesResult.error };
+                        },
+                      };
                     },
                   };
                 },
@@ -347,6 +351,7 @@ test("List conversations: success", async () => {
   (conv as any).p2 = { first_name: "Jane", last_name: "Smith" };
 
   scenario.conversations = [conv];
+  scenario.messagesResult = { messages: [makeMessage()], error: null };
 
   const app = await buildApp();
   const res = await app.inject({
@@ -369,6 +374,10 @@ test("List conversations: success", async () => {
   // isP1 = true, so otherUserProfile should be conv.p2 (Jane Smith)
   assert.equal(conversation.otherUserFirstName, "Jane");
   assert.equal(conversation.otherUserLastName, "Smith");
+  
+  // Verify last message (mocked as makeMessage in the stub)
+  assert.ok(conversation.lastMessage);
+  assert.equal(conversation.lastMessage.content, "Hello!");
   
   await app.close();
 });

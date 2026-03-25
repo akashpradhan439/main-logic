@@ -313,10 +313,19 @@ export function createMessagingRoutes(
           return reply.status(500).send({ success: false, error: "Unable to list conversations right now" });
         }
 
-        const conversations = (data ?? []).map((conv: any) => {
+        const conversations = await Promise.all((data ?? []).map(async (conv: any) => {
           const isP1 = conv.participant_one === userId;
           const otherUserId = isP1 ? conv.participant_two : conv.participant_one;
           const otherUserProfile = isP1 ? conv.p2 : conv.p1;
+
+          // Fetch latest message for this conversation
+          const { data: lastMsg } = await supabase
+            .from("messages")
+            .select("id, content, sender_id, created_at, attachment_url, attachment_type")
+            .eq("conversation_id", conv.id)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
 
           return {
             id: conv.id,
@@ -325,8 +334,16 @@ export function createMessagingRoutes(
             otherUserLastName: otherUserProfile?.last_name || null,
             createdAt: conv.created_at,
             updatedAt: conv.updated_at,
+            lastMessage: lastMsg ? {
+              id: lastMsg.id,
+              content: lastMsg.content,
+              senderId: lastMsg.sender_id,
+              createdAt: lastMsg.created_at,
+              attachmentUrl: lastMsg.attachment_url,
+              attachmentType: lastMsg.attachment_type,
+            } : null,
           };
-        });
+        }));
 
         log.info(
           { event: "conversations_list_success", userId, requestId, count: conversations.length },
