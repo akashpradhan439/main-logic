@@ -8,8 +8,9 @@ services:
     healthcheck:
       test: rabbitmq-diagnostics -q ping
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 10s
+      retries: 10
+      start_period: 60s
     restart: always
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
