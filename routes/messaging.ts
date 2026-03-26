@@ -133,8 +133,8 @@ export function createMessagingRoutes(
       }
       subClient.subscribe("conversation_updated", (message) => {
         try {
-          const { userIds } = JSON.parse(message);
-          sseManager.notifyUsers(userIds, { type: "conversation_updated" });
+          const { userIds, data } = JSON.parse(message);
+          sseManager.notifyUsers(userIds, data);
         } catch (err) {
           app.log.error({ event: "sse_redis_parse_error", err }, "Failed to parse Redis message for SSE");
         }
@@ -245,7 +245,13 @@ export function createMessagingRoutes(
         if (created) {
           getRedisClient().then((redis) => {
             if (!redis) return;
-            redis.publish("conversation_updated", JSON.stringify({ userIds: [userId, otherUserId] }));
+            redis.publish("conversation_updated", JSON.stringify({ 
+              userIds: [userId, otherUserId],
+              data: {
+                type: "conversation_created",
+                conversationId: conversation.id,
+              }
+            }));
           }).catch((err) => {
             log.error({ event: "sse_publish_error", err }, "Failed to publish conversation update to Redis");
           });
@@ -629,7 +635,21 @@ export function createMessagingRoutes(
           // Trigger SSE update via Redis
           getRedisClient().then((redis) => {
             if (!redis) return;
-            redis.publish("conversation_updated", JSON.stringify({ userIds: [userId, recipientId] }));
+            redis.publish("conversation_updated", JSON.stringify({ 
+              userIds: [userId, recipientId],
+              data: {
+                type: "conversation_updated",
+                conversationId,
+                lastMessage: {
+                  id: message.id,
+                  content: message.content,
+                  senderId: userId,
+                  createdAt: message.created_at,
+                  attachmentUrl: message.attachment_url,
+                  attachmentType: message.attachment_type,
+                }
+              }
+            }));
           }).catch((err) => {
             log.error({ event: "sse_publish_error", err }, "Failed to publish conversation update to Redis");
           });
