@@ -1,0 +1,36 @@
+{
+  "common": {
+    "errors": {
+      "auth_required": "需要驗證",
+      "invalid_token": "無效或過期的權杖",
+      "unexpected": "發生意外錯誤",
+      "unable_to_process": "由於系統原因目前無法處理您的請求"
+    }
+  },
+  "connections": {
+    "errors": {
+      "invalid_qr": "無效的二維碼權杖",
+      "qr_expired": "二維碼權杖已過期",
+      "qr_used": "二維碼權杖無效或已被使用",
+      "self_connect": "無法與自己連接",
+      "target_not_found": "未找到二維碼對應的用戶",
+      "already_connected": "已與該用戶連接",
+      "cooldown": "拒絕後連接請求暫時禁用。請稍後再試。",
+      "blocked": "無法連接此用戶",
+      "generic_failure": "無法處理連接請求"
+    },
+    "success": {
+      "accepted": "已接受連接"
+    }
+  },
+  "messaging": {
+    "errors": {
+      "self_conversation": "無法與自己創建對話",
+      "not_connected": "必須與此用戶連接才能向他們發送消息",
+      "not_participant": "您不是此對話的參與者",
+      "blocked_view": "您無法查看此對話的消息",
+      "blocked_send": "您無法向此用戶發送消息",
+      "generic_failure": "目前無法創建對話"
+    }
+  }
+}

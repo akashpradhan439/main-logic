@@ -35,7 +35,7 @@ export default async function locationRoutes(app: FastifyInstance) {
           log.info({ event: "auth_failed", requestId }, "Authentication failed");
           return reply.status(err.status).send({
             success: false,
-            error: "Authentication required",
+            error: req.t("common.errors.auth_required"),
           });
         }
         throw err;
@@ -98,7 +98,7 @@ export default async function locationRoutes(app: FastifyInstance) {
         );
         return reply.status(500).send({
           success: false,
-          error: "Unable to update location right now",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
 
@@ -159,7 +159,7 @@ export default async function locationRoutes(app: FastifyInstance) {
         );
         return reply.status(500).send({
           success: false,
-          error: "Unable to update location right now",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
 
@@ -248,7 +248,7 @@ export default async function locationRoutes(app: FastifyInstance) {
       );
       return reply.status(500).send({
         success: false,
-        error: "Unable to update location right now",
+        error: req.t("common.errors.unable_to_process"),
       });
     }
   });

@@ -1,0 +1,36 @@
+{
+  "common": {
+    "errors": {
+      "auth_required": "Autenticação obrigatória",
+      "invalid_token": "Token inválido ou expirado",
+      "unexpected": "Ocorreu um erro inesperado",
+      "unable_to_process": "Não é possível processar sua solicitação no momento"
+    }
+  },
+  "connections": {
+    "errors": {
+      "invalid_qr": "Token QR inválido",
+      "qr_expired": "O token QR expirou",
+      "qr_used": "O token QR é inválido ou já foi usado",
+      "self_connect": "Não é possível se conectar a si mesmo",
+      "target_not_found": "Usuário do código QR não encontrado",
+      "already_connected": "Já conectado com este usuário",
+      "cooldown": "A solicitação de conexão está temporariamente desativada após a rejeição. Tente novamente mais tarde.",
+      "blocked": "Não foi possível se conectar com este usuário",
+      "generic_failure": "Não é possível processar a solicitação de conexão"
+    },
+    "success": {
+      "accepted": "Conexão aceita"
+    }
+  },
+  "messaging": {
+    "errors": {
+      "self_conversation": "Não é possível criar uma conversa com você mesmo",
+      "not_connected": "Você deve estar conectado a este usuário para enviar mensagens a ele",
+      "not_participant": "Você não participa desta conversa",
+      "blocked_view": "Você não pode ver as mensagens desta conversa",
+      "blocked_send": "Você não pode enviar mensagens para este usuário",
+      "generic_failure": "Não é possível criar a conversa no momento"
+    }
+  }
+}

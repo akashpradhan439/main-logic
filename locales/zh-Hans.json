@@ -1,0 +1,36 @@
+{
+  "common": {
+    "errors": {
+      "auth_required": "需要验证",
+      "invalid_token": "无效或过期的令牌",
+      "unexpected": "发生意外错误",
+      "unable_to_process": "由于系统原因目前无法处理您的请求"
+    }
+  },
+  "connections": {
+    "errors": {
+      "invalid_qr": "无效的二维码令牌",
+      "qr_expired": "二维码令牌已过期",
+      "qr_used": "二维码令牌无效或已被使用",
+      "self_connect": "无法与自己连接",
+      "target_not_found": "未找到二维码对应的用户",
+      "already_connected": "已与该用户连接",
+      "cooldown": "拒绝后连接请求暂时禁用。请稍后再试。",
+      "blocked": "无法连接此用户",
+      "generic_failure": "无法处理连接请求"
+    },
+    "success": {
+      "accepted": "已接受连接"
+    }
+  },
+  "messaging": {
+    "errors": {
+      "self_conversation": "无法与自己创建对话",
+      "not_connected": "必须与此用户连接才能向他们发送消息",
+      "not_participant": "您不是此对话的参与者",
+      "blocked_view": "您无法查看此对话的消息",
+      "blocked_send": "您无法向此用户发送消息",
+      "generic_failure": "目前无法创建对话"
+    }
+  }
+}

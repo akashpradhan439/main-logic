@@ -148,6 +148,10 @@ const deps: Partial<ConnectionsRouteDeps> = {
 
 async function buildApp() {
   const app = Fastify({ logger: false });
+  app.decorateRequest("t", null as any);
+  app.addHook("onRequest", async (request) => {
+    request.t = ((key: string) => key) as any; // Dummy translator
+  });
   const { createConnectionsRoutes } = await import("../routes/connections.js");
   await app.register(createConnectionsRoutes(deps));
   await app.ready();

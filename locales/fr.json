@@ -1,0 +1,36 @@
+{
+  "common": {
+    "errors": {
+      "auth_required": "Authentification requise",
+      "invalid_token": "Jeton invalide ou expiré",
+      "unexpected": "Une erreur inattendue s'est produite",
+      "unable_to_process": "Impossible de traiter votre demande pour le moment"
+    }
+  },
+  "connections": {
+    "errors": {
+      "invalid_qr": "Jeton QR invalide",
+      "qr_expired": "Le jeton QR a expiré",
+      "qr_used": "Le jeton QR est invalide ou a déjà été utilisé",
+      "self_connect": "Vous ne pouvez pas vous connecter à vous-même",
+      "target_not_found": "Utilisateur du code QR introuvable",
+      "already_connected": "Déjà connecté avec cet utilisateur",
+      "cooldown": "La demande de connexion est temporairement désactivée. Veuillez réessayer plus tard.",
+      "blocked": "Impossible de se connecter à cet utilisateur",
+      "generic_failure": "Impossible de traiter la demande de connexion"
+    },
+    "success": {
+      "accepted": "Connexion acceptée"
+    }
+  },
+  "messaging": {
+    "errors": {
+      "self_conversation": "Vous ne pouvez pas créer de conversation avec vous-même",
+      "not_connected": "Vous devez être connecté à cet utilisateur pour échanger des messages",
+      "not_participant": "Vous ne participez pas à cette conversation",
+      "blocked_view": "Vous ne pouvez pas voir les messages de cette conversation",
+      "blocked_send": "Vous ne pouvez pas envoyer de messages à cet utilisateur",
+      "generic_failure": "Impossible de créer la conversation pour le moment"
+    }
+  }
+}

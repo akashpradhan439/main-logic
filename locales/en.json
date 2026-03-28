@@ -1,0 +1,36 @@
+{
+  "common": {
+    "errors": {
+      "auth_required": "Authentication required",
+      "invalid_token": "Invalid or expired token",
+      "unexpected": "An unexpected error occurred",
+      "unable_to_process": "Unable to process your request right now"
+    }
+  },
+  "connections": {
+    "errors": {
+      "invalid_qr": "Invalid QR token",
+      "qr_expired": "QR token has expired",
+      "qr_used": "QR token is invalid or has already been used",
+      "self_connect": "Cannot connect to yourself",
+      "target_not_found": "User from QR code not found",
+      "already_connected": "Already connected with this user",
+      "cooldown": "Connection request is temporarily disabled after rejection. Please try again later.",
+      "blocked": "Unable to connect with this user",
+      "generic_failure": "Unable to process connection request"
+    },
+    "success": {
+      "accepted": "Connection accepted"
+    }
+  },
+  "messaging": {
+    "errors": {
+      "self_conversation": "Cannot create conversation with yourself",
+      "not_connected": "You must be connected with this user to message them",
+      "not_participant": "You are not a participant in this conversation",
+      "blocked_view": "You cannot view messages for this conversation",
+      "blocked_send": "You cannot send messages to this user",
+      "generic_failure": "Unable to create conversation right now"
+    }
+  }
+}

@@ -2,12 +2,17 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import Fastify from "fastify";
+import { getTranslator } from "./lib/i18n.js";
 
 const port = Number(process.env.PORT) || 3000;
 
 async function main() {
   const { default: registerRoutes } = await import("./routes/index.js");
   const app = Fastify({ logger: true });
+
+  app.addHook("onRequest", async (req) => {
+    req.t = getTranslator(req.headers["accept-language"]);
+  });
 
   await registerRoutes(app);
 

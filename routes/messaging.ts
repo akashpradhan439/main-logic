@@ -156,7 +156,7 @@ export function createMessagingRoutes(
           userId = user.sub;
         } catch (err) {
           if (err instanceof AuthError) {
-            return reply.status(err.status).send({ success: false, error: "Authentication required" });
+            return reply.status(err.status).send({ success: false, error: req.t("common.errors.auth_required") });
           }
           throw err;
         }
@@ -167,7 +167,7 @@ export function createMessagingRoutes(
         return reply.status(200).send({ success: true, token });
       } catch (err) {
         log.error({ event: "ws_token_error", requestId, err }, "Error generating WS token");
-        return reply.status(500).send({ success: false, error: "Unable to generate token" });
+        return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
       }
     });
 
@@ -186,7 +186,7 @@ export function createMessagingRoutes(
         } catch (err) {
           if (err instanceof AuthError) {
             log.info({ event: "auth_failed", requestId }, "Authentication failed");
-            return reply.status(err.status).send({ success: false, error: "Authentication required" });
+            return reply.status(err.status).send({ success: false, error: req.t("common.errors.auth_required") });
           }
           throw err;
         }
@@ -199,7 +199,7 @@ export function createMessagingRoutes(
         const { otherUserId } = parsed.data;
 
         if (otherUserId === userId) {
-          return reply.status(400).send({ success: false, error: "Cannot create conversation with yourself" });
+          return reply.status(400).send({ success: false, error: req.t("messaging.errors.self_conversation") });
         }
 
         log.info(
@@ -217,11 +217,11 @@ export function createMessagingRoutes(
             { event: "conversation_create_failure", userId, otherUserId, requestId, err: connError.message },
             "Failed to check connection"
           );
-          return reply.status(500).send({ success: false, error: "Unable to create conversation right now" });
+          return reply.status(500).send({ success: false, error: req.t("messaging.errors.generic_failure") });
         }
 
         if (!connection || connection.status !== "accepted" || isPairBlocked(connection)) {
-          return reply.status(403).send({ success: false, error: "You must be connected with this user to message them" });
+          return reply.status(403).send({ success: false, error: req.t("messaging.errors.not_connected") });
         }
 
         const { conversation, error, created } = await findOrCreateConversation(
@@ -233,7 +233,7 @@ export function createMessagingRoutes(
             { event: "conversation_create_failure", userId, otherUserId, requestId },
             "Failed to create conversation"
           );
-          return reply.status(500).send({ success: false, error: "Unable to create conversation right now" });
+          return reply.status(500).send({ success: false, error: req.t("messaging.errors.generic_failure") });
         }
 
         const requestDurationMs = Number(process.hrtime.bigint() - requestStart) / 1_000_000;
@@ -273,7 +273,7 @@ export function createMessagingRoutes(
           { event: "conversation_create_error", requestId, durationMs: requestDurationMs, err },
           "Unexpected error creating conversation"
         );
-        return reply.status(500).send({ success: false, error: "Unable to create conversation right now" });
+        return reply.status(500).send({ success: false, error: req.t("messaging.errors.generic_failure") });
       }
     });
 
@@ -290,7 +290,7 @@ export function createMessagingRoutes(
           userId = user.sub;
         } catch (err) {
           if (err instanceof AuthError) {
-            return reply.status(err.status).send({ success: false, error: "Authentication required" });
+            return reply.status(err.status).send({ success: false, error: req.t("common.errors.auth_required") });
           }
           throw err;
         }
@@ -316,7 +316,7 @@ export function createMessagingRoutes(
             { event: "conversations_list_failure", userId, requestId, err: error.message },
             "Failed to list conversations"
           );
-          return reply.status(500).send({ success: false, error: "Unable to list conversations right now" });
+          return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
         }
 
         const conversations = await Promise.all((data ?? []).map(async (conv: any) => {
@@ -362,7 +362,7 @@ export function createMessagingRoutes(
           { event: "conversations_list_error", requestId, err },
           "Unexpected error listing conversations"
         );
-        return reply.status(500).send({ success: false, error: "Unable to list conversations right now" });
+        return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
       }
     });
 
@@ -379,7 +379,7 @@ export function createMessagingRoutes(
 
         if (!token) {
           log.info({ event: "sse_auth_no_token", requestId }, "SSE connection attempt with no token");
-          return reply.status(401).send({ success: false, error: "Authentication token required" });
+          return reply.status(401).send({ success: false, error: req.t("common.errors.auth_required") });
         }
 
         let userId: string;
@@ -388,14 +388,14 @@ export function createMessagingRoutes(
           userId = payload.sub;
         } catch (err) {
           log.info({ event: "sse_auth_failed", requestId, err }, "SSE authentication failed");
-          return reply.status(401).send({ success: false, error: "Invalid or expired token" });
+          return reply.status(401).send({ success: false, error: req.t("common.errors.invalid_token") });
         }
 
         log.info({ event: "sse_connect", userId, requestId }, "SSE connection established");
         sseManager.addClient(userId, reply);
       } catch (err) {
         log.error({ event: "sse_connect_error", requestId, err }, "Error establishing SSE connection");
-        return reply.status(500).send({ success: false, error: "Unable to establish stream" });
+        return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
       }
     });
 
@@ -413,7 +413,7 @@ export function createMessagingRoutes(
           userId = user.sub;
         } catch (err) {
           if (err instanceof AuthError) {
-            return reply.status(err.status).send({ success: false, error: "Authentication required" });
+            return reply.status(err.status).send({ success: false, error: req.t("common.errors.auth_required") });
           }
           throw err;
         }
@@ -428,15 +428,15 @@ export function createMessagingRoutes(
             { event: "messages_fetch_failure", conversationId, userId, requestId, err: verifyError.message },
             "Failed to verify participant"
           );
-          return reply.status(500).send({ success: false, error: "Unable to fetch messages right now" });
+          return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
         }
 
         if (!isParticipant) {
-          return reply.status(403).send({ success: false, error: "You are not a participant in this conversation" });
+          return reply.status(403).send({ success: false, error: req.t("messaging.errors.not_participant") });
         }
 
         if (isBlocked) {
-          return reply.status(403).send({ success: false, error: "You cannot view messages for this conversation" });
+          return reply.status(403).send({ success: false, error: req.t("messaging.errors.blocked_view") });
         }
 
         const parsed = MessageHistoryQuerySchema.safeParse(req.query);
@@ -455,7 +455,7 @@ export function createMessagingRoutes(
             { event: "messages_fetch_failure", conversationId, userId, requestId, err: error.message },
             "Failed to fetch messages"
           );
-          return reply.status(500).send({ success: false, error: "Unable to fetch messages right now" });
+          return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
         }
 
         log.info(
@@ -472,7 +472,7 @@ export function createMessagingRoutes(
           { event: "messages_fetch_error", requestId, err },
           "Unexpected error fetching messages"
         );
-        return reply.status(500).send({ success: false, error: "Unable to fetch messages right now" });
+        return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
       }
     });
 
@@ -491,7 +491,7 @@ export function createMessagingRoutes(
 
       if (!token) {
         log.info({ event: "ws_auth_no_token", requestId }, "WebSocket connection attempt with no token");
-        socket.send(JSON.stringify({ type: "error", message: "Authentication token required" }));
+        socket.send(JSON.stringify({ type: "error", message: req.t("common.errors.auth_required") }));
         socket.close(4001, "Token required");
         return;
       }
@@ -501,7 +501,7 @@ export function createMessagingRoutes(
         userId = payload.sub;
       } catch (err) {
         log.info({ event: "ws_auth_failed", requestId, err }, "WebSocket authentication failed");
-        socket.send(JSON.stringify({ type: "error", message: "Invalid or expired token" }));
+        socket.send(JSON.stringify({ type: "error", message: req.t("common.errors.invalid_token") }));
         socket.close(4001, "Authentication failed");
         return;
       }
@@ -586,7 +586,7 @@ export function createMessagingRoutes(
           if (verifyError || !isParticipant || !conversation) {
             socket.send(JSON.stringify({
               type: "error",
-              message: "You are not a participant in this conversation",
+              message: req.t("messaging.errors.not_participant"),
             }));
             return;
           }
@@ -594,7 +594,7 @@ export function createMessagingRoutes(
           if (isBlocked) {
             socket.send(JSON.stringify({
               type: "error",
-              message: "You cannot send messages to this user",
+              message: req.t("messaging.errors.blocked_send"),
             }));
             return;
           }
@@ -607,7 +607,7 @@ export function createMessagingRoutes(
           if (insertError || !message) {
             socket.send(JSON.stringify({
               type: "error",
-              message: "Failed to send message",
+              message: req.t("common.errors.unable_to_process"),
             }));
             return;
           }
@@ -746,7 +746,7 @@ export function createMessagingRoutes(
             { event: "ws_message_processing_error", userId, requestId: messageRequestId, err },
             "Error processing WebSocket message"
           );
-          socket.send(JSON.stringify({ type: "error", message: "Failed to process message" }));
+          socket.send(JSON.stringify({ type: "error", message: req.t("common.errors.unable_to_process") }));
         }
       });
 

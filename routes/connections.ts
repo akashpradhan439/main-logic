@@ -103,7 +103,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(err.status).send({
             success: false,
-            error: "Authentication required",
+            error: req.t("common.errors.auth_required"),
           });
         }
         throw err;
@@ -174,7 +174,7 @@ export function createConnectionsRoutes(
 
         return reply.status(500).send({
           success: false,
-          error: "Failed to generate QR token",
+          error: req.t("connections.errors.generic_failure"),
         });
       }
     } catch (err) {
@@ -189,7 +189,7 @@ export function createConnectionsRoutes(
 
       return reply.status(500).send({
         success: false,
-        error: "An unexpected error occurred",
+        error: req.t("common.errors.unexpected"),
       });
     }
   });
@@ -214,7 +214,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(err.status).send({
             success: false,
-            error: "Authentication required",
+            error: req.t("common.errors.auth_required"),
           });
         }
         throw err;
@@ -262,7 +262,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(400).send({
             success: false,
-            error: "Invalid QR token",
+            error: req.t("connections.errors.invalid_qr"),
           });
         }
 
@@ -280,7 +280,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(400).send({
             success: false,
-            error: "QR token has expired",
+            error: req.t("connections.errors.qr_expired"),
           });
         }
 
@@ -300,7 +300,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(400).send({
             success: false,
-            error: "QR token is invalid or has already been used",
+            error: req.t("connections.errors.qr_used"),
           });
         }
 
@@ -318,7 +318,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(400).send({
             success: false,
-            error: "Cannot connect to yourself",
+            error: req.t("connections.errors.self_connect"),
           });
         }
 
@@ -365,7 +365,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(404).send({
             success: false,
-            error: "User from QR code not found",
+            error: req.t("connections.errors.target_not_found"),
           });
         }
 
@@ -389,7 +389,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(500).send({
             success: false,
-            error: "Unable to process QR scan",
+            error: req.t("connections.errors.generic_failure"),
           });
         }
 
@@ -411,7 +411,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(403).send({
             success: false,
-            error: "Unable to connect with this user",
+            error: req.t("connections.errors.blocked"),
           });
         }
 
@@ -429,7 +429,7 @@ export function createConnectionsRoutes(
             );
             return reply.status(409).send({
               success: false,
-              error: "Already connected with this user",
+              error: req.t("connections.errors.already_connected"),
             });
           }
 
@@ -456,7 +456,7 @@ export function createConnectionsRoutes(
               );
               return reply.status(500).send({
                 success: false,
-                error: "Failed to process connection",
+                error: req.t("connections.errors.generic_failure"),
               });
             }
 
@@ -475,7 +475,7 @@ export function createConnectionsRoutes(
             return reply.status(200).send({
               success: true,
               data: {
-                message: "Connection accepted",
+                message: req.t("connections.success.accepted"),
                 action: "accepted",
               },
             });
@@ -499,7 +499,7 @@ export function createConnectionsRoutes(
               );
               return reply.status(400).send({
                 success: false,
-                error: "Connection request is temporarily disabled after rejection. Please try again later.",
+                error: req.t("connections.errors.cooldown"),
               });
             }
 
@@ -528,7 +528,7 @@ export function createConnectionsRoutes(
               );
               return reply.status(500).send({
                 success: false,
-                error: "Failed to process connection request",
+                error: req.t("connections.errors.generic_failure"),
               });
             }
 
@@ -549,7 +549,7 @@ export function createConnectionsRoutes(
             return reply.status(200).send({
               success: true,
               data: {
-                message: "Connection accepted",
+                message: req.t("connections.success.accepted"),
                 action: "accepted",
                 targetUserId,
               },
@@ -580,7 +580,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(500).send({
             success: false,
-            error: "Failed to process connection request",
+            error: req.t("connections.errors.generic_failure"),
           });
         }
 
@@ -602,7 +602,7 @@ export function createConnectionsRoutes(
         return reply.status(200).send({
           success: true,
           data: {
-            message: "Connection accepted",
+            message: req.t("connections.success.accepted"),
             action: "accepted",
             targetUserId,
           },
@@ -623,7 +623,7 @@ export function createConnectionsRoutes(
 
         return reply.status(400).send({
           success: false,
-          error: "Invalid QR token",
+          error: req.t("connections.errors.invalid_qr"),
         });
       }
     } catch (err) {
@@ -638,7 +638,7 @@ export function createConnectionsRoutes(
 
       return reply.status(500).send({
         success: false,
-        error: "An unexpected error occurred",
+        error: req.t("common.errors.unexpected"),
       });
     }
   });
@@ -661,7 +661,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(err.status).send({
             success: false,
-            error: "Authentication required",
+            error: req.t("common.errors.auth_required"),
           });
         }
         throw err;
@@ -732,7 +732,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(404).send({
           success: false,
-          error: "Unable to send connection request",
+          error: req.t("connections.errors.generic_failure"),
         });
       }
 
@@ -752,7 +752,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(500).send({
           success: false,
-          error: "Unable to process connection request right now",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
 
@@ -773,7 +773,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(403).send({
           success: false,
-          error: "Unable to send connection request",
+          error: req.t("connections.errors.blocked"),
         });
       }
 
@@ -793,7 +793,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(409).send({
             success: false,
-            error: "Connection already exists",
+            error: req.t("connections.errors.already_connected"),
           });
         }
 
@@ -811,7 +811,7 @@ export function createConnectionsRoutes(
             );
             return reply.status(409).send({
               success: false,
-              error: "Unable to send connection request right now",
+              error: req.t("connections.errors.generic_failure"),
             });
           }
 
@@ -851,7 +851,7 @@ export function createConnectionsRoutes(
             );
             return reply.status(400).send({
               success: false,
-              error: "Connection request is temporarily disabled after rejection. Please try again later.",
+              error: req.t("connections.errors.cooldown"),
             });
           }
 
@@ -885,7 +885,7 @@ export function createConnectionsRoutes(
             );
             return reply.status(500).send({
               success: false,
-              error: "Unable to process connection request right now",
+              error: req.t("common.errors.unable_to_process"),
             });
           }
 
@@ -948,7 +948,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(500).send({
           success: false,
-          error: "Unable to process connection request right now",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
 
@@ -990,7 +990,7 @@ export function createConnectionsRoutes(
       );
       return reply.status(500).send({
         success: false,
-        error: "Unable to process connection request right now",
+        error: req.t("common.errors.unable_to_process"),
       });
     }
   });
@@ -1013,7 +1013,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(err.status).send({
             success: false,
-            error: "Authentication required",
+            error: req.t("common.errors.auth_required"),
           });
         }
         throw err;
@@ -1092,7 +1092,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(500).send({
           success: false,
-          error: "Unable to fetch connections right now",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
 
@@ -1165,7 +1165,7 @@ export function createConnectionsRoutes(
       );
       return reply.status(500).send({
         success: false,
-        error: "Unable to fetch connections right now",
+        error: req.t("common.errors.unable_to_process"),
       });
     }
   });
@@ -1188,7 +1188,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(err.status).send({
             success: false,
-            error: "Authentication required",
+            error: req.t("common.errors.auth_required"),
           });
         }
         throw err;
@@ -1263,7 +1263,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(500).send({
           success: false,
-          error: "Unable to fetch connections right now",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
 
@@ -1326,7 +1326,7 @@ export function createConnectionsRoutes(
       );
       return reply.status(500).send({
         success: false,
-        error: "Unable to fetch connections right now",
+        error: req.t("common.errors.unable_to_process"),
       });
     }
   });
@@ -1351,7 +1351,7 @@ export function createConnectionsRoutes(
             );
             return reply.status(err.status).send({
               success: false,
-              error: "Authentication required",
+              error: req.t("common.errors.auth_required"),
             });
           }
           throw err;
@@ -1398,7 +1398,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(404).send({
             success: false,
-            error: "Unable to perform this action",
+            error: req.t("common.errors.unable_to_process"),
           });
         }
 
@@ -1416,7 +1416,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(403).send({
             success: false,
-            error: "Unable to perform this action",
+            error: req.t("common.errors.unable_to_process"),
           });
         }
 
@@ -1434,7 +1434,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(403).send({
             success: false,
-            error: "Unable to perform this action",
+            error: req.t("common.errors.unable_to_process"),
           });
         }
 
@@ -1464,7 +1464,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(500).send({
             success: false,
-            error: "Unable to update connection right now",
+            error: req.t("common.errors.unable_to_process"),
           });
         }
 
@@ -1503,7 +1503,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(500).send({
           success: false,
-          error: "Unable to update connection right now",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
     }
@@ -1529,7 +1529,7 @@ export function createConnectionsRoutes(
             );
             return reply.status(err.status).send({
               success: false,
-              error: "Authentication required",
+              error: req.t("common.errors.auth_required"),
             });
           }
           throw err;
@@ -1576,7 +1576,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(404).send({
             success: false,
-            error: "Unable to perform this action",
+            error: req.t("common.errors.unable_to_process"),
           });
         }
 
@@ -1594,7 +1594,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(403).send({
             success: false,
-            error: "Unable to perform this action",
+            error: req.t("common.errors.unable_to_process"),
           });
         }
 
@@ -1612,7 +1612,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(403).send({
             success: false,
-            error: "Unable to perform this action",
+            error: req.t("common.errors.unable_to_process"),
           });
         }
 
@@ -1642,7 +1642,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(500).send({
             success: false,
-            error: "Unable to update connection right now",
+            error: req.t("common.errors.unable_to_process"),
           });
         }
 
@@ -1679,7 +1679,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(500).send({
           success: false,
-          error: "Unable to update connection right now",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
     }
@@ -1705,7 +1705,7 @@ export function createConnectionsRoutes(
             );
             return reply.status(err.status).send({
               success: false,
-              error: "Authentication required",
+              error: req.t("common.errors.auth_required"),
             });
           }
           throw err;
@@ -1752,7 +1752,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(404).send({
             success: false,
-            error: "Unable to perform this action",
+            error: req.t("common.errors.unable_to_process"),
           });
         }
 
@@ -1770,7 +1770,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(403).send({
             success: false,
-            error: "Unable to perform this action",
+            error: req.t("common.errors.unable_to_process"),
           });
         }
 
@@ -1788,7 +1788,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(403).send({
             success: false,
-            error: "Unable to perform this action",
+            error: req.t("common.errors.unable_to_process"),
           });
         }
 
@@ -1815,7 +1815,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(500).send({
             success: false,
-            error: "Unable to update connection right now",
+            error: req.t("common.errors.unable_to_process"),
           });
         }
 
@@ -1851,7 +1851,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(500).send({
           success: false,
-          error: "Unable to update connection right now",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
     }
@@ -1875,7 +1875,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(err.status).send({
             success: false,
-            error: "Authentication required",
+            error: req.t("common.errors.auth_required"),
           });
         }
         throw err;
@@ -1922,7 +1922,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(404).send({
           success: false,
-          error: "Unable to perform this action",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
 
@@ -1940,7 +1940,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(403).send({
           success: false,
-          error: "Unable to perform this action",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
 
@@ -1957,7 +1957,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(403).send({
           success: false,
-          error: "Unable to perform this action",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
 
@@ -1975,7 +1975,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(403).send({
           success: false,
-          error: "Unable to perform this action",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
 
@@ -2002,7 +2002,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(500).send({
           success: false,
-          error: "Unable to update connection right now",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
 
@@ -2038,7 +2038,7 @@ export function createConnectionsRoutes(
       );
       return reply.status(500).send({
         success: false,
-        error: "Unable to update connection right now",
+        error: req.t("common.errors.unable_to_process"),
       });
     }
   });
@@ -2061,7 +2061,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(err.status).send({
             success: false,
-            error: "Authentication required",
+            error: req.t("common.errors.auth_required"),
           });
         }
         throw err;
@@ -2127,7 +2127,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(404).send({
           success: false,
-          error: "Unable to perform this action",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
 
@@ -2147,7 +2147,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(500).send({
           success: false,
-          error: "Unable to perform this action",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
 
@@ -2187,7 +2187,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(500).send({
             success: false,
-            error: "Unable to perform this action",
+            error: req.t("common.errors.unable_to_process"),
           });
         }
 
@@ -2276,7 +2276,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(500).send({
           success: false,
-          error: "Unable to perform this action",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
 
@@ -2314,7 +2314,7 @@ export function createConnectionsRoutes(
       );
       return reply.status(500).send({
         success: false,
-        error: "Unable to perform this action",
+        error: req.t("common.errors.unable_to_process"),
       });
     }
   });
@@ -2337,7 +2337,7 @@ export function createConnectionsRoutes(
           );
           return reply.status(err.status).send({
             success: false,
-            error: "Authentication required",
+            error: req.t("common.errors.auth_required"),
           });
         }
         throw err;
@@ -2376,7 +2376,7 @@ export function createConnectionsRoutes(
         );
         return reply.status(500).send({
           success: false,
-          error: "Unable to perform this action",
+          error: req.t("common.errors.unable_to_process"),
         });
       }
 

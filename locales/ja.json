@@ -1,0 +1,36 @@
+{
+  "common": {
+    "errors": {
+      "auth_required": "認証が必要です",
+      "invalid_token": "無効または期限切れのトークン",
+      "unexpected": "予期しないエラーが発生しました",
+      "unable_to_process": "現在、リクエストを処理できません"
+    }
+  },
+  "connections": {
+    "errors": {
+      "invalid_qr": "無効なQRトークン",
+      "qr_expired": "QRトークンの期限が切れました",
+      "qr_used": "QRトークンが無効であるか、既に使用されています",
+      "self_connect": "自分自身とつながることはできません",
+      "target_not_found": "QRコードのユーザーが見つかりません",
+      "already_connected": "このユーザーとは既につながっています",
+      "cooldown": "リクエストは拒否されたため、一時的に無効になっています。後でもう一度お試しください。",
+      "blocked": "このユーザーとつながることができません",
+      "generic_failure": "接続リクエストを処理できません"
+    },
+    "success": {
+      "accepted": "接続が承認されました"
+    }
+  },
+  "messaging": {
+    "errors": {
+      "self_conversation": "自分自身との会話は作成できません",
+      "not_connected": "メッセージを送信するには、このユーザーとつながっている必要があります",
+      "not_participant": "あなたはこの会話の参加者ではありません",
+      "blocked_view": "この会話のメッセージを表示できません",
+      "blocked_send": "このユーザーにメッセージを送信できません",
+      "generic_failure": "現在、会話を作成できません"
+    }
+  }
+}
