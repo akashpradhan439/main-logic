@@ -213,10 +213,16 @@ const deps: Partial<MessagingRouteDeps> = {
   redisSet: async () => {},
   redisDel: async () => {},
   redisGet: async () => null,
+  createRedisSubClient: async () => null,
+  getRedisClient: async () => null,
 };
 
 async function buildApp() {
   const app = Fastify({ logger: false });
+  app.decorateRequest("t", null as any);
+  app.addHook("onRequest", async (request) => {
+    request.t = ((key: string) => key) as any;
+  });
   const { createMessagingRoutes } = await import("../routes/messaging.js");
   await app.register(createMessagingRoutes(deps));
   await app.ready();
@@ -431,7 +437,7 @@ test("SSE Stream: 401 with missing token", async () => {
   assert.equal(res.statusCode, 401);
   const body = res.json();
   assert.equal(body.success, false);
-  assert.equal(body.error, "Authentication token required");
+  assert.equal(body.error, "common.errors.auth_required");
   await app.close();
 });
 
@@ -445,7 +451,7 @@ test("SSE Stream: 401 with invalid token", async () => {
   assert.equal(res.statusCode, 401);
   const body = res.json();
   assert.equal(body.success, false);
-  assert.equal(body.error, "Invalid or expired token");
+  assert.equal(body.error, "common.errors.invalid_token");
   await app.close();
 });
 

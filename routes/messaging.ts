@@ -126,11 +126,13 @@ export function createMessagingRoutes(
     const sseManager = new SSEManager();
 
     // Set up Redis Subscriber for cross-instance SSE notifications
+    let subClientInstance: any = null;
     createRedisSubClient().then((subClient) => {
       if (!subClient) {
         app.log.info({ event: "sse_redis_skip" }, "Skipping Redis subscriber for SSE (Redis disabled or unavailable)");
         return;
       }
+      subClientInstance = subClient;
       subClient.subscribe("conversation_updated", (message) => {
         try {
           const { userIds, data } = JSON.parse(message);
@@ -775,6 +777,10 @@ export function createMessagingRoutes(
     // ─── Graceful Shutdown ──────────────────────────────────────────────────
 
     app.addHook("onClose", async () => {
+      if (subClientInstance) {
+        await subClientInstance.quit().catch(() => {});
+        app.log.info({ event: "sse_redis_shutdown" }, "Redis subscriber connection closed");
+      }
       for (const [userId, socket] of wsConnections) {
         socket.close(1001, "Server shutting down");
         await redisDel(`${REDIS_PRESENCE_PREFIX}${userId}`).catch(() => {});
