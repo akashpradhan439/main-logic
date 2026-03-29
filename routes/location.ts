@@ -11,11 +11,11 @@ import {
 } from "../lib/metrics.js";
 import { verifyAccessToken } from "../shared/auth.js";
 import { AuthError } from "../shared/auth.js";
-import { getHexRingDistance } from "../shared/h3.js";
+import { getHexRingDistance, isValidResolution, getHexDisk } from "../shared/h3.js";
 
 const UpdateHexSchema = z.object({
   center_hex: z.string().min(1),
-  neighbor_hexes: z.array(z.string()).min(1),
+  neighbor_hexes: z.array(z.string()).optional(), // Now optional as we calculate it on server
 });
 
 export default async function locationRoutes(app: FastifyInstance) {
@@ -55,7 +55,21 @@ export default async function locationRoutes(app: FastifyInstance) {
         });
       }
 
-      const { center_hex, neighbor_hexes } = parsed.data;
+      const { center_hex } = parsed.data;
+
+      // 2.1 Enforce resolution 4
+      if (!isValidResolution(center_hex, 4)) {
+        log.warn({ event: "invalid_resolution", userId, center_hex, requestId }, "Invalid hex resolution received");
+        return reply.status(400).send({
+          success: false,
+          error: req.t("common.errors.invalid_parameter"),
+        });
+      }
+
+      // 2.2 Calculate 2rd ring disk (radius 2)
+      // Radius 2 includes center + 1 ring + 2nd ring (19 hexes total)
+      const disk = getHexDisk(center_hex, 2);
+      const neighbor_hexes = disk.filter(h => h !== center_hex);
 
       // 3️⃣ Fetch previous location (timed)
       const fetchStart = process.hrtime.bigint();
