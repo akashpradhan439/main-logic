@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package e2ee;
+
+message MessageHeader {
+  bytes dh_public_key = 1;
+  uint32 n = 2;
+  uint32 pn = 3;
+}
+
+message MessageEnvelope {
+  MessageHeader header = 1;
+  bytes ciphertext = 2;
+}

@@ -16,7 +16,11 @@ import {
   ed25519ToX25519,
   ed25519skToX25519,
 } from "./cryptography.js";
-import { type MessageEnvelope, type MessageHeader } from "./types.js";
+import { 
+  type MessageEnvelope, 
+  type MessageHeader, 
+  encodeHeader 
+} from "./types.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -349,13 +353,7 @@ export class DoubleRatchet {
   }
 
   private serializeHeader(header: MessageHeader): Uint8Array {
-    // Standardized serialization for AD
-    const buffer = new Uint8Array(header.dhPublicKey.length + 8);
-    buffer.set(header.dhPublicKey, 0);
-    const view = new DataView(buffer.buffer);
-    view.setUint32(header.dhPublicKey.length, header.n, true);
-    view.setUint32(header.dhPublicKey.length + 4, header.pn, true);
-    return buffer;
+    return encodeHeader(header);
   }
 
   private getSkippedKeyIdentifier(pubKey: Uint8Array, n: number): string {

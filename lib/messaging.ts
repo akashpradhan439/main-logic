@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { findConnectionBetweenUsers, isPairBlocked } from "./connections.js";
 
-import type { MessageEnvelope } from "../shared/types.js";
+// Removed duplicate import
 
 export interface ConversationRow {
   id: string;
@@ -15,7 +15,7 @@ export interface MessageRow {
   id: string;
   conversation_id: string;
   sender_id: string;
-  envelope: MessageEnvelope;
+  envelope: Uint8Array; // Protobuf encoded envelope
   attachment_url: string | null;
   attachment_type: string | null;
   created_at: string;
@@ -118,6 +118,8 @@ export async function findOrCreateConversation(
   return { conversation: created as ConversationRow, error: null, created: true };
 }
 
+import { encodeEnvelope, type MessageEnvelope } from "../shared/types.js";
+
 /**
  * Inserts an E2EE message into a conversation.
  */
@@ -130,15 +132,16 @@ export async function insertMessage(
   attachmentType: string | null,
   log: { info: (obj: object, msg?: string) => void; error: (obj: object, msg?: string) => void }
 ): Promise<{ message: MessageRow | null; error: Error | null }> {
+  // Encode the structured envelope to Protobuf binary
+  const binaryEnvelope = encodeEnvelope(envelope);
+
   const { data, error } = await client
     .from("messages")
     .insert({
       conversation_id: conversationId,
       sender_id: senderId,
-      // We store the envelope as a JSONB object in the 'content' column for now, 
-      // or a dedicated 'envelope' column if available. 
-      // Assuming a migration to 'envelope' jsonb column.
-      envelope,
+      // Store Protobuf binary as Base64 in the jsonb/text column
+      envelope: Buffer.from(binaryEnvelope).toString("base64"),
       attachment_url: attachmentUrl,
       attachment_type: attachmentType,
     })
@@ -152,6 +155,16 @@ export async function insertMessage(
     );
     return { message: null, error: error as unknown as Error };
   }
+
+  const message: MessageRow = {
+    id: data.id,
+    conversation_id: data.conversation_id,
+    sender_id: data.sender_id,
+    envelope: Buffer.from(data.envelope, "base64"),
+    attachment_url: data.attachment_url,
+    attachment_type: data.attachment_type,
+    created_at: data.created_at,
+  };
 
   // Bump conversation updated_at
   const { error: updateError } = await client
@@ -167,7 +180,7 @@ export async function insertMessage(
     // Non-fatal: the message was still inserted successfully
   }
 
-  return { message: data as MessageRow, error: null };
+  return { message, error: null };
 }
 
 /**
@@ -196,7 +209,12 @@ export async function getConversationMessages(
     return { messages: [], error: error as unknown as Error };
   }
 
-  return { messages: (data ?? []) as MessageRow[], error: null };
+  const messages: MessageRow[] = (data ?? []).map((m: any) => ({
+    ...m,
+    envelope: Buffer.from(m.envelope, "base64"),
+  }));
+
+  return { messages: messages, error: null };
 }
 
 /**
