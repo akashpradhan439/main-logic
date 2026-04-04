@@ -24,24 +24,17 @@ CREATE INDEX IF NOT EXISTS idx_otp_unused ON one_time_prekeys (user_id, is_pq)
 WHERE used_at IS NULL;
 
 -- Update messages table for E2EE metadata
--- Since the user said "overhaul", we can augment the existing table or recreate it.
--- We'll add nullable columns for E2EE metadata to maintain compatibility during migration if needed, 
--- but strictly focus on 1:1 E2EE.
+-- We use a single 'envelope' JSONB column to store the header and ciphertext.
+-- This keeps the backend as a 'blind mailbox' while allowing for future protocol extensibility.
 
-ALTER TABLE messages ADD COLUMN IF NOT EXISTS ephemeral_key text; -- Base64 (X25519/ML-KEM ephemeral)
-ALTER TABLE messages ADD COLUMN IF NOT EXISTS ratchet_index integer; -- Double Ratchet message index
-ALTER TABLE messages ADD COLUMN IF NOT EXISTS previous_ratchet_index integer; -- For skipped messages
-ALTER TABLE messages ADD COLUMN IF NOT EXISTS header_mac text; -- AES-SIV tag for header protection if stored separately
-
--- Type for message encryption status
--- "none" (legacy), "signal" (Double Ratchet)
 DO $$ BEGIN
     CREATE TYPE encryption_type AS ENUM ('none', 'signal');
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS envelope jsonb;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS encryption_type encryption_type DEFAULT 'none';
 
--- Add a column for the E2EE envelope (header + ciphertext) if we want to store it as a single blob
--- For now, we'll use 'content' for the ciphertext and the above columns for the header.
+-- Add a comment to explain the envelope structure for developers
+COMMENT ON COLUMN messages.envelope IS 'Stores {header: {dhPublicKey, n, pn}, ciphertext} for E2EE messages';
