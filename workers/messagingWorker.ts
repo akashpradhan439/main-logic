@@ -101,11 +101,8 @@ async function sendMessageNotification(
   note.expiry = Math.floor(Date.now() / 1000) + 3600;
   note.sound = "default";
 
-  // Build alert message
-  if (event.content) {
-    const preview = event.content.length > 100 ? event.content.substring(0, 97) + "..." : event.content;
-    note.alert = { title: senderName, body: preview };
-  } else if (event.attachmentType) {
+  // Build alert message - Always generic for E2EE to maintain privacy
+  if (event.attachmentType) {
     const mediaType = event.attachmentType.startsWith("image/") ? "an image"
       : event.attachmentType.startsWith("video/") ? "a video"
       : "a file";
@@ -114,12 +111,12 @@ async function sendMessageNotification(
     note.alert = { title: senderName, body: "Sent you a message" };
   }
 
-  note.topic = config.apnsBundleId;
   note.payload = {
     type: "new_message",
     conversationId: event.conversationId,
     messageId: event.messageId,
     senderId: event.senderId,
+    envelope: event.envelope,
   };
 
   try {

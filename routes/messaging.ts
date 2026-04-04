@@ -37,13 +37,17 @@ const MessageHistoryQuerySchema = z.object({
 const WsIncomingMessageSchema = z.object({
   type: z.literal("send_message"),
   conversationId: z.string().uuid(),
-  content: z.string().nullable().default(null),
+  envelope: z.object({
+    header: z.object({
+      dhPublicKey: z.any(), // Will be transformed to Uint8Array if needed, or handled as JSON
+      n: z.number(),
+      pn: z.number(),
+    }),
+    ciphertext: z.any(), // base64 or Uint8Array
+  }),
   attachmentUrl: z.string().url().nullable().default(null),
   attachmentType: z.string().nullable().default(null),
-}).refine(
-  (data) => data.content !== null || data.attachmentUrl !== null,
-  { message: "Message must have content or an attachment" }
-);
+});
 
 // ─── WebSocket Connection Registry ────────────────────────────────────────────
 
@@ -329,7 +333,7 @@ export function createMessagingRoutes(
           // Fetch latest message for this conversation
           const { data: lastMsg } = await supabase
             .from("messages")
-            .select("id, content, sender_id, created_at, attachment_url, attachment_type")
+            .select("id, envelope, sender_id, created_at, attachment_url, attachment_type")
             .eq("conversation_id", conv.id)
             .order("created_at", { ascending: false })
             .limit(1)
@@ -344,7 +348,7 @@ export function createMessagingRoutes(
             updatedAt: conv.updated_at,
             lastMessage: lastMsg ? {
               id: lastMsg.id,
-              content: lastMsg.content,
+              envelope: lastMsg.envelope,
               senderId: lastMsg.sender_id,
               createdAt: lastMsg.created_at,
               attachmentUrl: lastMsg.attachment_url,
@@ -566,14 +570,14 @@ export function createMessagingRoutes(
             return;
           }
 
-          const { conversationId, content, attachmentUrl, attachmentType } = validated.data;
+          const { conversationId, envelope, attachmentUrl, attachmentType } = validated.data;
 
           log.info(
             {
               event: "ws_message_received",
               userId,
               conversationId,
-              hasContent: content !== null,
+              hasEnvelope: !!envelope,
               hasAttachment: attachmentUrl !== null,
               requestId: messageRequestId,
             },
@@ -603,7 +607,7 @@ export function createMessagingRoutes(
 
           // Insert into DB
           const { message, error: insertError } = await insertMessage(
-            supabase, conversationId, userId, content, attachmentUrl, attachmentType, log
+            supabase, conversationId, userId, envelope as any, attachmentUrl, attachmentType, log
           );
 
           if (insertError || !message) {
@@ -644,7 +648,7 @@ export function createMessagingRoutes(
                 conversationId,
                 lastMessage: {
                   id: message.id,
-                  content: message.content,
+                  envelope: message.envelope,
                   senderId: userId,
                   createdAt: message.created_at,
                   attachmentUrl: message.attachment_url,
@@ -662,7 +666,7 @@ export function createMessagingRoutes(
             messageId: message.id,
             conversationId,
             senderId: userId,
-            content: message.content,
+            envelope: message.envelope,
             attachmentUrl: message.attachment_url,
             attachmentType: message.attachment_type,
             createdAt: message.created_at,
@@ -695,7 +699,7 @@ export function createMessagingRoutes(
                 messageId: message.id,
                 senderId: userId,
                 recipientId,
-                content: message.content,
+                envelope: message.envelope,
                 attachmentUrl: message.attachment_url,
                 attachmentType: message.attachment_type,
                 createdAt: message.created_at,

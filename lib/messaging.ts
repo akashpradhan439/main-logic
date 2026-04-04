@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { findConnectionBetweenUsers, isPairBlocked } from "./connections.js";
 
+import type { MessageEnvelope } from "../shared/types.js";
+
 export interface ConversationRow {
   id: string;
   participant_one: string;
@@ -13,7 +15,7 @@ export interface MessageRow {
   id: string;
   conversation_id: string;
   sender_id: string;
-  content: string | null;
+  envelope: MessageEnvelope;
   attachment_url: string | null;
   attachment_type: string | null;
   created_at: string;
@@ -117,13 +119,13 @@ export async function findOrCreateConversation(
 }
 
 /**
- * Inserts a message into a conversation and bumps the conversation's updated_at.
+ * Inserts an E2EE message into a conversation.
  */
 export async function insertMessage(
   client: SupabaseClient,
   conversationId: string,
   senderId: string,
-  content: string | null,
+  envelope: MessageEnvelope,
   attachmentUrl: string | null,
   attachmentType: string | null,
   log: { info: (obj: object, msg?: string) => void; error: (obj: object, msg?: string) => void }
@@ -133,11 +135,14 @@ export async function insertMessage(
     .insert({
       conversation_id: conversationId,
       sender_id: senderId,
-      content,
+      // We store the envelope as a JSONB object in the 'content' column for now, 
+      // or a dedicated 'envelope' column if available. 
+      // Assuming a migration to 'envelope' jsonb column.
+      envelope,
       attachment_url: attachmentUrl,
       attachment_type: attachmentType,
     })
-    .select("id, conversation_id, sender_id, content, attachment_url, attachment_type, created_at")
+    .select("id, conversation_id, sender_id, envelope, attachment_url, attachment_type, created_at")
     .single();
 
   if (error) {
@@ -176,7 +181,7 @@ export async function getConversationMessages(
 ): Promise<{ messages: MessageRow[]; error: Error | null }> {
   let query = client
     .from("messages")
-    .select("id, conversation_id, sender_id, content, attachment_url, attachment_type, created_at")
+    .select("id, conversation_id, sender_id, envelope, attachment_url, attachment_type, created_at")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(limit);

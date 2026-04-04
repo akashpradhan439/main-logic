@@ -247,7 +247,14 @@ function makeMessage(overrides: Partial<MessageRow> = {}): MessageRow {
     id: "d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f80",
     conversation_id: scenario.conversationId,
     sender_id: scenario.userId,
-    content: "Hello!",
+    envelope: {
+      header: {
+        dhPublicKey: new Uint8Array([1, 2, 3]),
+        n: 0,
+        pn: 0,
+      },
+      ciphertext: new Uint8Array([4, 5, 6]),
+    },
     attachment_url: null,
     attachment_type: null,
     created_at: new Date().toISOString(),
@@ -383,7 +390,8 @@ test("List conversations: success", async () => {
   
   // Verify last message (mocked as makeMessage in the stub)
   assert.ok(conversation.lastMessage);
-  assert.equal(conversation.lastMessage.content, "Hello!");
+  assert.ok(conversation.lastMessage.envelope);
+  assert.deepEqual(conversation.lastMessage.envelope.header.n, 0);
   
   await app.close();
 });
