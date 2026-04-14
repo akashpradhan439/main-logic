@@ -24,6 +24,55 @@ Each client must manage several types of keys:
 4.  **One-Time Prekeys (OPK)**: A batch of X25519 keys for one-time use.
 5.  **PQ One-Time Prekeys (PQOPK)**: A batch of ML-KEM-768 keys for one-time use.
 
+### Uploading Keys
+Clients must upload their public keys to the server after login/registration.
+
+**POST `/keys/upload`**
+
+**Headers:**
+- `Authorization: Bearer <JWT_ACCESS_TOKEN>`
+
+**Body:**
+```json
+{
+  "identityKey": "BASE64_IDENTITY_PUBLIC_KEY",
+  "signedPrekey": "BASE64_SIGNED_PREKEY_PUBLIC_KEY",
+  "pqSignedPrekey": "BASE64_PQ_SIGNED_PREKEY_PUBLIC_KEY",
+  "signature": "BASE64_SIGNATURE_OF_SPK_BY_IK",
+  "oneTimePrekeys": [
+    { "key": "BASE64_OPK_1", "isPq": false },
+    { "key": "BASE64_PQOPK_1", "isPq": true }
+  ]
+}
+```
+
+### Fetching a Prekey Bundle
+To start a conversation, you must fetch the recipient's bundle.
+
+**GET `/keys/bundle/:userId`**
+
+**Headers:**
+- `Authorization: Bearer <JWT_ACCESS_TOKEN>`
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "bundle": {
+    "userId": "RECIPIENT_UUID",
+    "identityKey": "...",
+    "signedPrekey": "...",
+    "pqSignedPrekey": "...",
+    "signature": "...",
+    "oneTimePrekey": "...",
+    "pqOneTimePrekey": "..."
+  }
+}
+```
+
+**Error (404 Not Found):**
+If the server returns a 404 error, it means the recipient has **not uploaded their prekey bundle yet**. You cannot initiate an E2EE conversation with this user until they do so.
+
 ---
 
 ## 🤝 PQXDH Handshake
