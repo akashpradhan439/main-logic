@@ -648,7 +648,7 @@ export function createMessagingRoutes(
                 conversationId,
                 lastMessage: {
                   id: message.id,
-                  envelope: message.envelope,
+                  envelope: envelope, // Use structured envelope instead of binary
                   senderId: userId,
                   createdAt: message.created_at,
                   attachmentUrl: message.attachment_url,
@@ -666,7 +666,7 @@ export function createMessagingRoutes(
             messageId: message.id,
             conversationId,
             senderId: userId,
-            envelope: message.envelope,
+            envelope: envelope, // Use structured envelope instead of binary
             attachmentUrl: message.attachment_url,
             attachmentType: message.attachment_type,
             createdAt: message.created_at,
@@ -699,7 +699,7 @@ export function createMessagingRoutes(
                 messageId: message.id,
                 senderId: userId,
                 recipientId,
-                envelope: message.envelope,
+                envelope: envelope, // Use structured envelope instead of binary
                 attachmentUrl: message.attachment_url,
                 attachmentType: message.attachment_type,
                 createdAt: message.created_at,

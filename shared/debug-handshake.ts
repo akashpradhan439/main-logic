@@ -23,6 +23,7 @@ async function main() {
     signedPrekey: bobSPK.publicKey,
     pqSignedPrekey: bobPQSPK.publicKey,
     signature: bobSPKSig,
+    pqSignature: new Uint8Array(64), // Dummy signature for debug
     oneTimePrekey: bobOPK.publicKey,
     pqOneTimePrekey: bobPQOPK.publicKey,
   };
