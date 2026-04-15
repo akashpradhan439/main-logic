@@ -36,13 +36,12 @@ Clients must upload their public keys to the server after login/registration.
 ```json
 {
   "identityKey": "BASE64_IDENTITY_PUBLIC_KEY",
-  "signedPrekey": "BASE64_SIGNED_PREKEY_PUBLIC_KEY",
-  "pqSignedPrekey": "BASE64_PQ_SIGNED_PREKEY_PUBLIC_KEY",
-  "signature": "BASE64_SIGNATURE_OF_SPK_BY_IK",
-  "oneTimePrekeys": [
-    { "key": "BASE64_OPK_1", "isPq": false },
-    { "key": "BASE64_PQOPK_1", "isPq": true }
-  ]
+  "signedPreKey": "BASE64_SIGNED_PREKEY_PUBLIC_KEY",
+  "pqSignedPreKey": "BASE64_PQ_SIGNED_PREKEY_PUBLIC_KEY",
+  "signedPreKeySignature": "BASE64_SIGNATURE_OF_SPK_BY_IK",
+  "pqSignedPreKeySignature": "BASE64_PQ_SIGNATURE_OF_PQSPK_BY_IK",
+  "oneTimePreKeys": ["BASE64_OPK_1", "BASE64_OPK_2"],
+  "pqOneTimePreKeys": ["BASE64_PQOPK_1", "BASE64_PQOPK_2"]
 }
 ```
 
@@ -85,10 +84,12 @@ func uploadKeys(token: String, identityKey: Data, signedPrekey: Data, pqSignedPr
 
     let body: [String: Any] = [
         "identityKey": identityKey.base64EncodedString(),
-        "signedPrekey": signedPrekey.base64EncodedString(),
-        "pqSignedPrekey": pqSignedPrekey.base64EncodedString(),
-        "signature": signature.base64EncodedString(),
-        "oneTimePrekeys": [] // Populate with generated OPKs/PQOPKs
+        "signedPreKey": signedPrekey.base64EncodedString(),
+        "pqSignedPreKey": pqSignedPrekey.base64EncodedString(),
+        "signedPreKeySignature": signature.base64EncodedString(),
+        "pqSignedPreKeySignature": "...", // Signature of PQSPK
+        "oneTimePreKeys": [],
+        "pqOneTimePreKeys": []
     ]
 
     request.httpBody = try? JSONSerialization.data(withJSONObject: body)
