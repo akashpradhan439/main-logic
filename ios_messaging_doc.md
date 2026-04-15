@@ -123,6 +123,8 @@ Fetches paginated messages for a specific conversation.
 
 ## ⚡ Real-time Messaging (WebSocket)
 
+**The WebSocket connection is global per user.** You should establish **one single, persistent connection** for the entire app session. All messages for all conversations are sent and received through this same socket.
+
 **Endpoint:** `GET /messaging/ws?token=<WS_TOKEN>`
 
 ### Outgoing Message (Client -> Server)
@@ -195,6 +197,8 @@ class MessagingClient: NSObject, URLSessionWebSocketDelegate {
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
+    /// Connects to the global messaging WebSocket.
+    /// This should be called once when the app starts or the user logs in.
     func connect(wsToken: String) {
         let url = URL(string: "wss://api.yourdomain.com/messaging/ws?token=\(wsToken)")!
         let session = URLSession(configuration: .default, delegate: self, delegateQueue: OperationQueue())
