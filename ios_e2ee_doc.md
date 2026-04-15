@@ -73,6 +73,36 @@ To start a conversation, you must fetch the recipient's bundle.
 **Error (404 Not Found):**
 If the server returns a 404 error, it means the recipient has **not uploaded their prekey bundle yet**. You cannot initiate an E2EE conversation with this user until they do so.
 
+### 📱 Swift Example: Uploading Keys
+
+```swift
+func uploadKeys(token: String, identityKey: Data, signedPrekey: Data, pqSignedPrekey: Data, signature: Data) {
+    let url = URL(string: "https://api.yourdomain.com/keys/upload")!
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+    let body: [String: Any] = [
+        "identityKey": identityKey.base64EncodedString(),
+        "signedPrekey": signedPrekey.base64EncodedString(),
+        "pqSignedPrekey": pqSignedPrekey.base64EncodedString(),
+        "signature": signature.base64EncodedString(),
+        "oneTimePrekeys": [] // Populate with generated OPKs/PQOPKs
+    ]
+
+    request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+    URLSession.shared.dataTask(with: request) { data, response, error in
+        if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+            print("Keys uploaded successfully")
+        } else {
+            print("Upload failed: \(String(describing: response))")
+        }
+    }.resume()
+}
+```
+
 ---
 
 ## 🤝 PQXDH Handshake
