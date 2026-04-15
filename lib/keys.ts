@@ -6,6 +6,7 @@ export interface PrekeyBundle {
   signedPrekey: string;
   pqSignedPrekey: string;
   signature: string;
+  pqSignature: string;
   oneTimePrekey?: string;
   pqOneTimePrekey?: string;
 }
@@ -18,8 +19,10 @@ export async function uploadPrekeys(
     signedPrekey: string;
     pqSignedPrekey: string;
     signature: string;
+    pqSignature: string;
   },
-  oneTimePrekeys: { key: string; isPq: boolean }[]
+  oneTimePrekeys: string[],
+  pqOneTimePreKeys: string[]
 ) {
   // 1. Upload/Update user prekeys
   const { error: prekeyError } = await supabase
@@ -30,22 +33,22 @@ export async function uploadPrekeys(
       signed_prekey_public: bundle.signedPrekey,
       pq_signed_prekey_public: bundle.pqSignedPrekey,
       signature: bundle.signature,
+      pq_signature: bundle.pqSignature,
       updated_at: new Date().toISOString(),
     });
 
   if (prekeyError) return { error: prekeyError };
 
   // 2. Upload one-time prekeys
-  if (oneTimePrekeys.length > 0) {
+  const allOTPs = [
+    ...oneTimePrekeys.map(key => ({ user_id: userId, key_public: key, is_pq: false })),
+    ...pqOneTimePreKeys.map(key => ({ user_id: userId, key_public: key, is_pq: true }))
+  ];
+
+  if (allOTPs.length > 0) {
     const { error: otpError } = await supabase
       .from("one_time_prekeys")
-      .insert(
-        oneTimePrekeys.map((p) => ({
-          user_id: userId,
-          key_public: p.key,
-          is_pq: p.isPq,
-        }))
-      );
+      .insert(allOTPs);
     if (otpError) return { error: otpError };
   }
 
@@ -102,6 +105,7 @@ export async function getPrekeyBundle(
       signedPrekey: userPrekeys.signed_prekey_public,
       pqSignedPrekey: userPrekeys.pq_signed_prekey_public,
       signature: userPrekeys.signature,
+      pqSignature: userPrekeys.pq_signature,
       oneTimePrekey: opk?.key_public,
       pqOneTimePrekey: pqOpk?.key_public,
     },

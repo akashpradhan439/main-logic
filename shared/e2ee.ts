@@ -29,6 +29,7 @@ export interface HandshakeBundle {
   signedPrekey: Uint8Array;
   pqSignedPrekey: Uint8Array;
   signature: Uint8Array;
+  pqSignature: Uint8Array;
   oneTimePrekey?: Uint8Array;
   pqOneTimePrekey?: Uint8Array;
 }
@@ -48,9 +49,12 @@ export async function initiateHandshake(
   aliceIdentityKeyPair: SignKeyPair & DHKeyPair,
   bobBundle: HandshakeBundle
 ): Promise<HandshakeResult> {
-  // 1. Verify Bob's signature on SPKb by IKb
+  // 1. Verify Bob's signatures on SPKb and PQSPKb by IKb
   const isValid = verify(bobBundle.signedPrekey, bobBundle.signature, bobBundle.identityKey);
   if (!isValid) throw new Error("Invalid bundle signature");
+
+  const isValidPQ = verify(bobBundle.pqSignedPrekey, bobBundle.pqSignature, bobBundle.identityKey);
+  if (!isValidPQ) throw new Error("Invalid PQ bundle signature");
 
   // 2. Convert Bob's Ed25519 Identity Key to X25519 for DH
   const bobIdentityKX = ed25519ToX25519(bobBundle.identityKey);

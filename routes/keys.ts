@@ -8,13 +8,12 @@ import { uploadPrekeys, getPrekeyBundle } from "../lib/keys.js";
 
 const UploadKeysSchema = z.object({
   identityKey: z.string(),
-  signedPrekey: z.string(),
-  pqSignedPrekey: z.string(),
-  signature: z.string(),
-  oneTimePrekeys: z.array(z.object({
-    key: z.string(),
-    isPq: z.boolean(),
-  })).optional().default([]),
+  signedPreKey: z.string(),
+  pqSignedPreKey: z.string(),
+  signedPreKeySignature: z.string(),
+  pqSignedPreKeySignature: z.string(),
+  oneTimePreKeys: z.array(z.string()).optional().default([]),
+  pqOneTimePreKeys: z.array(z.string()).optional().default([]),
 });
 
 // ─── Dependency Injection ─────────────────────────────────────────────────────
@@ -69,13 +68,28 @@ export function createKeysRoutes(
           return reply.status(400).send({ success: false, error: parsed.error.flatten().fieldErrors });
         }
 
-        const { identityKey, signedPrekey, pqSignedPrekey, signature, oneTimePrekeys } = parsed.data;
+        const {
+          identityKey,
+          signedPreKey,
+          pqSignedPreKey,
+          signedPreKeySignature,
+          pqSignedPreKeySignature,
+          oneTimePreKeys,
+          pqOneTimePreKeys
+        } = parsed.data;
 
         const { error } = await uploadPrekeys(
           supabase as any,
           userId,
-          { identityKey, signedPrekey, pqSignedPrekey, signature },
-          oneTimePrekeys
+          {
+            identityKey,
+            signedPrekey: signedPreKey,
+            pqSignedPrekey: pqSignedPreKey,
+            signature: signedPreKeySignature,
+            pqSignature: pqSignedPreKeySignature
+          },
+          oneTimePreKeys,
+          pqOneTimePreKeys
         );
 
         if (error) {

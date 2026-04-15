@@ -22,6 +22,8 @@ test("PQXDH Handshake: Alice and Bob derive the same shared secret", async () =>
   // Real signature of the SPK's public key by the IK's private key
   const bobSPKSig = sign(bobSPK.publicKey, bobIK.privateKey);
   const bobPQSPK = generatePQKeyPair();
+  // Real signature of the PQSPK's public key by the IK's private key
+  const bobPQSPKSig = sign(bobPQSPK.publicKey, bobIK.privateKey);
   const bobOPK = generateDHKeyPair();
   const bobPQOPK = generatePQKeyPair();
 
@@ -31,6 +33,7 @@ test("PQXDH Handshake: Alice and Bob derive the same shared secret", async () =>
     signedPrekey: bobSPK.publicKey,
     pqSignedPrekey: bobPQSPK.publicKey,
     signature: bobSPKSig,
+    pqSignature: bobPQSPKSig,
     oneTimePrekey: bobOPK.publicKey,
     pqOneTimePrekey: bobPQOPK.publicKey,
   };
