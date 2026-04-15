@@ -123,7 +123,13 @@ Fetches paginated messages for a specific conversation.
 
 ## ⚡ Real-time Messaging (WebSocket)
 
-**The WebSocket connection is global per user.** You should establish **one single, persistent connection** for the entire app session. All messages for all conversations are sent and received through this same socket.
+**The WebSocket connection is global per user.** You should establish **one single, persistent connection** for the entire app session. This connection is **not per-conversation**. All messages for all conversations are multiplexed through this same socket.
+
+### Conversation Lifecycle
+When a user opens a specific conversation in the UI:
+1.  **Do NOT** open a new WebSocket.
+2.  **Fetch History**: Call `GET /messaging/conversations/:id/messages` via REST to load existing messages.
+3.  **Real-time Updates**: Listen to the existing **global** WebSocket. New messages for *any* conversation will arrive there; your client-side logic should route them to the correct chat view based on the `conversationId` in the payload.
 
 **Endpoint:** `GET /messaging/ws?token=<WS_TOKEN>`
 
