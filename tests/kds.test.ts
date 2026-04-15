@@ -62,6 +62,7 @@ const deps: Partial<KeysRouteDeps> = {
         signedPrekey: "spk",
         pqSignedPrekey: "pq-spk",
         signature: "sig",
+        pqSignature: "pq-sig",
         oneTimePrekey: "opk",
         pqOneTimePrekey: "pq-opk",
       },
@@ -99,10 +100,12 @@ test("Keys/Upload: success", async () => {
     headers: { authorization: "Bearer test" },
     payload: {
       identityKey: "ik",
-      signedPrekey: "spk",
-      pqSignedPrekey: "pqspk",
-      signature: "sig",
-      oneTimePrekeys: [{ key: "opk1", isPq: false }],
+      signedPreKey: "spk",
+      pqSignedPreKey: "pqspk",
+      signedPreKeySignature: "sig",
+      pqSignedPreKeySignature: "pqsig",
+      oneTimePreKeys: ["opk1"],
+      pqOneTimePreKeys: ["pqopk1"],
     },
   });
 

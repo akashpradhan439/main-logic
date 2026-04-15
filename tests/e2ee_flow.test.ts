@@ -34,6 +34,7 @@ test("Double Ratchet: Full E2EE Flow (Handshake + Messaging + Out-of-Order)", as
     signedPrekey: bobSPK.publicKey,
     pqSignedPrekey: bobPQSPK.publicKey,
     signature: bobSPKSig,
+    pqSignature: sign(bobPQSPK.publicKey, bobIK.privateKey),
   };
 
   const aliceIK = generateSignKeyPair();

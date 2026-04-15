@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "build": "rimraf dist && tsc",
+    "build": "rimraf dist && tsc && node -e \"const fs=require('fs'); const d='dist/shared'; if(!fs.existsSync(d))fs.mkdirSync(d,{recursive:true}); fs.copyFileSync('shared/envelope.proto',d+'/envelope.proto')\"",
     "dev": "tsx index.ts",
     "start": "node dist/index.js",
     "worker:location": "tsx workers/locationUpdatedWorker.ts",

@@ -254,7 +254,7 @@ function makeMessage(overrides: Partial<MessageRow> = {}): MessageRow {
         pn: 0,
       },
       ciphertext: new Uint8Array([4, 5, 6]),
-    },
+    } as any,
     attachment_url: null,
     attachment_type: null,
     created_at: new Date().toISOString(),
