@@ -121,6 +121,27 @@ Fetches paginated messages for a specific conversation.
 
 ---
 
+## 📻 Real-time Conversation Updates (SSE)
+
+For real-time updates to the conversation list (e.g., being notified when a new conversation is created or when any conversation receives a new message without having a WebSocket open for every chat), use Server-Sent Events.
+
+**GET `/messaging/conversations/stream?token=<WS_TOKEN>`**
+
+**Events:**
+- `conversation_updated`: Sent when a message is received in any conversation.
+- `conversation_created`: Sent when a new conversation is initiated.
+
+**Payload Example:**
+```json
+{
+  "type": "conversation_updated",
+  "conversationId": "CONVERSATION_UUID",
+  "lastMessage": { ... }
+}
+```
+
+---
+
 ## ⚡ Real-time Messaging (WebSocket)
 
 **The WebSocket connection is global per user.** You should establish **one single, persistent connection** for the entire app session. This connection is **not per-conversation**. All messages for all conversations are multiplexed through this same socket.
@@ -181,6 +202,16 @@ Sent after the server successfully receives and persists an outgoing message:
   "messageId": "MESSAGE_UUID",
   "conversationId": "CONVERSATION_UUID",
   "createdAt": "ISO8601_TIMESTAMP"
+}
+```
+
+### Error Messages (Server -> Client)
+The server may send error messages over the WebSocket if validation or security checks fail:
+
+```json
+{
+  "type": "error",
+  "message": "Localized error message explaining the failure"
 }
 ```
 

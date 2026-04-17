@@ -699,7 +699,7 @@ export function createMessagingRoutes(
                 messageId: message.id,
                 senderId: userId,
                 recipientId,
-                envelope: message.envelope,
+                envelope: message.envelope as any,
                 attachmentUrl: message.attachment_url,
                 attachmentType: message.attachment_type,
                 createdAt: message.created_at,
