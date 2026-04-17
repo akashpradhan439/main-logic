@@ -140,7 +140,15 @@ export function createMessagingRoutes(
       subClient.subscribe("conversation_updated", (message) => {
         try {
           const { userIds, data } = JSON.parse(message);
+          // Notify SSE clients
           sseManager.notifyUsers(userIds, data);
+          // Notify WebSocket clients (Single Channel Delivery)
+          for (const userId of userIds) {
+            const socket = wsConnections.get(userId);
+            if (socket && socket.readyState === 1) {
+              socket.send(JSON.stringify(data));
+            }
+          }
         } catch (err) {
           app.log.error({ event: "sse_redis_parse_error", err }, "Failed to parse Redis message for SSE");
         }
@@ -638,114 +646,86 @@ export function createMessagingRoutes(
             return;
           }
 
-          // Trigger SSE update via Redis
+          // Trigger real-time delivery via Redis (Multiplexed to WebSocket & SSE)
           getRedisClient().then((redis) => {
             if (!redis) return;
             redis.publish("conversation_updated", JSON.stringify({ 
               userIds: [userId, recipientId],
               data: {
-                type: "conversation_updated",
+                type: "new_message",
+                messageId: message.id,
                 conversationId,
-                lastMessage: {
-                  id: message.id,
-                  envelope: message.envelope,
-                  senderId: userId,
-                  createdAt: message.created_at,
-                  attachmentUrl: message.attachment_url,
-                  attachmentType: message.attachment_type,
-                }
+                senderId: userId,
+                envelope: message.envelope,
+                attachmentUrl: message.attachment_url,
+                attachmentType: message.attachment_type,
+                createdAt: message.created_at,
               }
             }));
           }).catch((err) => {
             log.error({ event: "sse_publish_error", err }, "Failed to publish conversation update to Redis");
           });
 
-          // Construct outgoing message payload
-          const outgoingPayload = {
-            type: "new_message",
-            messageId: message.id,
-            conversationId,
-            senderId: userId,
-            envelope: message.envelope,
-            attachmentUrl: message.attachment_url,
-            attachmentType: message.attachment_type,
-            createdAt: message.created_at,
-          };
+          // Check if recipient is online via Redis
+          const isRecipientOnline = await redisGet(`${REDIS_PRESENCE_PREFIX}${recipientId}`).catch(() => null);
 
-          // Try to deliver directly to recipient on this instance
-          const recipientSocket = wsConnections.get(recipientId);
-          if (recipientSocket && recipientSocket.readyState === 1) {
-            recipientSocket.send(JSON.stringify(outgoingPayload));
-            log.info(
-              {
-                event: "ws_message_delivered",
-                userId,
-                recipientId,
-                messageId: message.id,
-                conversationId,
-                delivery: "local",
-                requestId: messageRequestId,
-              },
-              "Message delivered locally"
-            );
-            return;
-          }
+          if (!isRecipientOnline) {
+            // Recipient offline — publish to RabbitMQ for push notification
+            try {
+              const published = await publishNewMessage(
+                {
+                  conversationId,
+                  messageId: message.id,
+                  senderId: userId,
+                  recipientId,
+                  envelope: message.envelope as any,
+                  attachmentUrl: message.attachment_url,
+                  attachmentType: message.attachment_type,
+                  createdAt: message.created_at,
+                  requestId: messageRequestId,
+                },
+                log
+              );
 
-          // Recipient not on this instance — publish to RabbitMQ for cross-instance delivery or offline push
-          try {
-            const published = await publishNewMessage(
-              {
-                conversationId,
-                messageId: message.id,
-                senderId: userId,
-                recipientId,
-                envelope: message.envelope as any,
-                attachmentUrl: message.attachment_url,
-                attachmentType: message.attachment_type,
-                createdAt: message.created_at,
-                requestId: messageRequestId,
-              },
-              log
-            );
-
-            if (!published) {
+              if (!published) {
+                messagesPublishFailuresTotal.inc();
+                log.error(
+                  {
+                    event: "ws_message_publish_failed",
+                    userId,
+                    recipientId,
+                    messageId: message.id,
+                    requestId: messageRequestId,
+                  },
+                  "Failed to publish message to RabbitMQ"
+                );
+              } else {
+                log.info(
+                  {
+                    event: "ws_message_offline",
+                    userId,
+                    recipientId,
+                    messageId: message.id,
+                    conversationId,
+                    requestId: messageRequestId,
+                  },
+                  "Message published for offline push notification"
+                );
+              }
+            } catch (publishErr) {
               messagesPublishFailuresTotal.inc();
               log.error(
                 {
-                  event: "ws_message_publish_failed",
+                  event: "ws_message_publish_error",
                   userId,
                   recipientId,
                   messageId: message.id,
                   requestId: messageRequestId,
+                  err: publishErr,
                 },
-                "Failed to publish message to RabbitMQ"
-              );
-            } else {
-              log.info(
-                {
-                  event: "ws_message_offline",
-                  userId,
-                  recipientId,
-                  messageId: message.id,
-                  conversationId,
-                  requestId: messageRequestId,
-                },
-                "Message published for offline/cross-instance delivery"
+                "Error publishing message to RabbitMQ"
               );
             }
-          } catch (publishErr) {
-            messagesPublishFailuresTotal.inc();
-            log.error(
-              {
-                event: "ws_message_publish_error",
-                userId,
-                recipientId,
-                messageId: message.id,
-                requestId: messageRequestId,
-                err: publishErr,
-              },
-              "Error publishing message to RabbitMQ"
-            );
           }
         } catch (err) {
           log.error(

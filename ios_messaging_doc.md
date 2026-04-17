@@ -121,38 +121,78 @@ Fetches paginated messages for a specific conversation.
 
 ---
 
-## 📻 Real-time Conversation Updates (SSE)
-
-For real-time updates to the conversation list (e.g., being notified when a new conversation is created or when any conversation receives a new message without having a WebSocket open for every chat), use Server-Sent Events.
-
-**GET `/messaging/conversations/stream?token=<WS_TOKEN>`**
-
-**Events:**
-- `conversation_updated`: Sent when a message is received in any conversation.
-- `conversation_created`: Sent when a new conversation is initiated.
-
-**Payload Example:**
-```json
-{
-  "type": "conversation_updated",
-  "conversationId": "CONVERSATION_UUID",
-  "lastMessage": { ... }
-}
-```
-
----
-
 ## ⚡ Real-time Messaging (WebSocket)
 
-**The WebSocket connection is global per user.** You should establish **one single, persistent connection** for the entire app session. This connection is **not per-conversation**. All messages for all conversations are multiplexed through this same socket.
+**The WebSocket connection is the single source of truth for all real-time events.** You should establish **one single, persistent connection** for the entire app session. This connection is **not per-conversation**. All messages and conversation updates are multiplexed through this same socket.
 
 ### Conversation Lifecycle
 When a user opens a specific conversation in the UI:
 1.  **Do NOT** open a new WebSocket.
 2.  **Fetch History**: Call `GET /messaging/conversations/:id/messages` via REST to load existing messages.
-3.  **Real-time Updates**: Listen to the existing **global** WebSocket. New messages for *any* conversation will arrive there; your client-side logic should route them to the correct chat view based on the `conversationId` in the payload.
+3.  **Real-time Updates**: Listen to the existing **global** WebSocket. New messages and updates for *any* conversation will arrive there; your client-side logic should route them to the correct chat view or update the inbox list based on the `type` and `conversationId`.
 
 **Endpoint:** `GET /messaging/ws?token=<WS_TOKEN>`
+
+### Incoming Event Types (Server -> Client)
+
+#### 1. New Message (`new_message`)
+Broadcasted when a new message is received in any conversation. Use this to update an active chat view or the "last message" in your inbox.
+
+```json
+{
+  "type": "new_message",
+  "messageId": "MESSAGE_UUID",
+  "conversationId": "CONVERSATION_UUID",
+  "senderId": "SENDER_UUID",
+  "envelope": {
+    "type": "Buffer",
+    "data": [10, 34, 18, ...]
+  },
+  "attachmentUrl": null,
+  "attachmentType": null,
+  "createdAt": "ISO8601_TIMESTAMP"
+}
+```
+
+#### 2. Conversation Created (`conversation_created`)
+Broadcasted when a new conversation is initiated with you. Use this to add a new entry to your inbox list.
+
+```json
+{
+  "type": "conversation_created",
+  "conversationId": "CONVERSATION_UUID"
+}
+```
+
+#### 3. Message Acknowledgment (`message_ack`)
+Sent after the server successfully receives and persists an outgoing message:
+
+```json
+{
+  "type": "message_ack",
+  "messageId": "MESSAGE_UUID",
+  "conversationId": "CONVERSATION_UUID",
+  "createdAt": "ISO8601_TIMESTAMP"
+}
+```
+
+#### 4. Error (`error`)
+The server may send error messages if validation or security checks fail:
+
+```json
+{
+  "type": "error",
+  "message": "Localized error message"
+}
+```
+
+---
+
+## 📻 Real-time Inbox Updates (SSE - Optional)
+
+For lightweight use cases where you only need conversation list updates without full WebSocket capabilities, you can use Server-Sent Events. However, the **WebSocket is recommended** as it receives all the same events.
+
+**GET `/messaging/conversations/stream?token=<WS_TOKEN>`**
 
 ### Outgoing Message (Client -> Server)
 To send a message, send a JSON object over the WebSocket:
@@ -205,17 +245,6 @@ Sent after the server successfully receives and persists an outgoing message:
 }
 ```
 
-### Error Messages (Server -> Client)
-The server may send error messages over the WebSocket if validation or security checks fail:
-
-```json
-{
-  "type": "error",
-  "message": "Localized error message explaining the failure"
-}
-```
-
----
 
 ## 📱 Swift WebSocket Example
 
