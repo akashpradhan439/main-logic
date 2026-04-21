@@ -6,6 +6,7 @@ export interface PrekeyBundle {
   signedPrekey: string;
   pqSignedPrekey: string;
   signature: string;
+  pqSignature?: string;
   oneTimePrekey?: string;
   pqOneTimePrekey?: string;
 }
@@ -18,6 +19,7 @@ export async function uploadPrekeys(
     signedPrekey: string;
     pqSignedPrekey: string;
     signature: string;
+    pqSignature?: string;
   },
   oneTimePrekeys: { key: string; isPq: boolean }[]
 ) {
@@ -30,6 +32,7 @@ export async function uploadPrekeys(
       signed_prekey_public: bundle.signedPrekey,
       pq_signed_prekey_public: bundle.pqSignedPrekey,
       signature: bundle.signature,
+      pq_signature: bundle.pqSignature,
       updated_at: new Date().toISOString(),
     });
 
@@ -102,6 +105,7 @@ export async function getPrekeyBundle(
       signedPrekey: userPrekeys.signed_prekey_public,
       pqSignedPrekey: userPrekeys.pq_signed_prekey_public,
       signature: userPrekeys.signature,
+      pqSignature: userPrekeys.pq_signature,
       oneTimePrekey: opk?.key_public,
       pqOneTimePrekey: pqOpk?.key_public,
     },

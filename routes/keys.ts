@@ -90,7 +90,8 @@ export function createKeysRoutes(
             identityKey,
             signedPrekey: signedPreKey,
             pqSignedPrekey: pqSignedPreKey,
-            signature: signedPreKeySignature, // We store the primary signature
+            signature: signedPreKeySignature,
+            pqSignature: pqSignedPreKeySignature,
           },
           allOneTimeKeys
         );

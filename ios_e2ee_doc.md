@@ -59,10 +59,11 @@ To start a conversation, you must fetch the recipient's bundle.
   "success": true,
   "bundle": {
     "userId": "RECIPIENT_UUID",
-    "identityKey": "...",
-    "signedPrekey": "...",
-    "pqSignedPrekey": "...",
-    "signature": "...",
+    "identityKey": "BASE64_ED25519_IDENTITY_KEY",
+    "signedPrekey": "BASE64_X25519_SIGNED_PREKEY",
+    "pqSignedPrekey": "BASE64_MLKEM_SIGNED_PREKEY",
+    "signature": "BASE64_64BYTE_ED25519_SIGNATURE_OF_SPK",
+    "pqSignature": "BASE64_64BYTE_ED25519_SIGNATURE_OF_PQSPK",
     "oneTimePrekey": "...",
     "pqOneTimePrekey": "..."
   }
