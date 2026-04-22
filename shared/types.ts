@@ -18,6 +18,11 @@ export interface MessageHeader {
 export interface MessageEnvelope {
   header: MessageHeader;
   ciphertext: Uint8Array; // AES-SIV encrypted payload
+  bootstrap?: {
+    senderIdentityKey: string;
+    senderEphemeralKey: string;
+    pqCiphertext?: string | null | undefined;
+  } | undefined;
 }
 
 export function encodeHeader(header: MessageHeader): Uint8Array {

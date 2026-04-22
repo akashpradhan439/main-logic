@@ -44,10 +44,74 @@ const WsIncomingMessageSchema = z.object({
       pn: z.number(),
     }),
     ciphertext: z.any(), // base64 or Uint8Array
+    bootstrap: z
+      .object({
+        senderIdentityKey: z.string(),
+        senderEphemeralKey: z.string(),
+        pqCiphertext: z.string().optional().nullable(),
+      })
+      .optional(),
   }),
   attachmentUrl: z.string().url().nullable().default(null),
   attachmentType: z.string().nullable().default(null),
 });
+
+function toUint8Array(input: unknown): Uint8Array | null {
+  if (input instanceof Uint8Array) return input;
+
+  if (typeof input === "string") {
+    try {
+      return Uint8Array.from(Buffer.from(input, "base64"));
+    } catch {
+      return null;
+    }
+  }
+
+  if (Array.isArray(input)) {
+    if (input.every((item) => Number.isInteger(item) && item >= 0 && item <= 255)) {
+      return Uint8Array.from(input as number[]);
+    }
+    return null;
+  }
+
+  if (input && typeof input === "object") {
+    const maybeBuffer = input as { type?: unknown; data?: unknown };
+    if (
+      maybeBuffer.type === "Buffer" &&
+      Array.isArray(maybeBuffer.data) &&
+      maybeBuffer.data.every((item) => Number.isInteger(item) && item >= 0 && item <= 255)
+    ) {
+      return Uint8Array.from(maybeBuffer.data as number[]);
+    }
+  }
+
+  return null;
+}
+
+function normalizeEnvelopeForStorage(envelope: {
+  header: { dhPublicKey: unknown; n: number; pn: number };
+  ciphertext: unknown;
+  bootstrap?: {
+    senderIdentityKey: string;
+    senderEphemeralKey: string;
+    pqCiphertext?: string | null | undefined;
+  } | undefined;
+}) {
+  const dhPublicKey = toUint8Array(envelope.header.dhPublicKey);
+  const ciphertext = toUint8Array(envelope.ciphertext);
+  if (!dhPublicKey || !ciphertext) {
+    return null;
+  }
+
+  return {
+    header: {
+      dhPublicKey,
+      n: envelope.header.n,
+      pn: envelope.header.pn,
+    },
+    ciphertext,
+  };
+}
 
 // ─── WebSocket Connection Registry ────────────────────────────────────────────
 
@@ -571,6 +635,15 @@ export function createMessagingRoutes(
           }
 
           const { conversationId, envelope, attachmentUrl, attachmentType } = validated.data;
+          const normalizedEnvelope = normalizeEnvelopeForStorage(envelope);
+          if (!normalizedEnvelope) {
+            socket.send(JSON.stringify({
+              type: "error",
+              code: "generic_failure",
+              message: "Invalid envelope encoding",
+            }));
+            return;
+          }
 
           log.info(
             {
@@ -607,12 +680,19 @@ export function createMessagingRoutes(
 
           // Insert into DB
           const { message, error: insertError } = await insertMessage(
-            supabase, conversationId, userId, envelope as any, attachmentUrl, attachmentType, log
+            supabase,
+            conversationId,
+            userId,
+            normalizedEnvelope as any,
+            attachmentUrl,
+            attachmentType,
+            log
           );
 
           if (insertError || !message) {
             socket.send(JSON.stringify({
               type: "error",
+              code: "generic_failure",
               message: req.t("common.errors.unable_to_process"),
             }));
             return;
