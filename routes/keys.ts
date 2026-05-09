@@ -7,13 +7,21 @@ import { uploadPrekeys, getPrekeyBundle } from "../lib/keys.js";
 // ─── Zod Schemas ──────────────────────────────────────────────────────────────
 
 const UploadKeysSchema = z.object({
-  identityKey: z.string(),
-  signedPreKey: z.string(),
-  pqSignedPreKey: z.string(),
-  signedPreKeySignature: z.string(),
-  pqSignedPreKeySignature: z.string(),
-  oneTimePreKeys: z.array(z.string()).optional().default([]),
-  pqOneTimePreKeys: z.array(z.string()).optional().default([]),
+  identityKey:             z.string().min(1),
+  signedPreKey:            z.string().min(1),
+  signedPreKeyId:          z.number().int().positive().default(1),
+  pqSignedPreKey:          z.string().min(1),
+  pqSignedPreKeyId:        z.number().int().positive().default(1),
+  signedPreKeySignature:   z.string().min(1),
+  pqSignedPreKeySignature: z.string().min(1),
+  oneTimePreKeys:          z.array(z.string().min(1)).optional().default([]),
+  pqOneTimePreKeys:        z.array(z.string().min(1)).optional().default([]),
+});
+
+const RotateSignedPrekeySchema = z.object({
+  signedPreKey:          z.string().min(1),
+  signedPreKeyId:        z.number().int().positive(),
+  signedPreKeySignature: z.string().min(1),
 });
 
 // ─── Dependency Injection ─────────────────────────────────────────────────────
@@ -26,9 +34,7 @@ export type KeysRouteDeps = {
   AuthError: typeof AuthError;
 };
 
-export function createKeysRoutes(
-  overrides: Partial<KeysRouteDeps> = {}
-) {
+export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
   const deps: KeysRouteDeps = {
     supabase,
     verifyAccessToken,
@@ -39,16 +45,10 @@ export function createKeysRoutes(
   };
 
   return async function keysRoutes(app: FastifyInstance) {
-    const {
-      supabase,
-      verifyAccessToken,
-      uploadPrekeys,
-      getPrekeyBundle,
-      AuthError,
-    } = deps;
+    const { supabase, verifyAccessToken, uploadPrekeys, getPrekeyBundle, AuthError } = deps;
 
     // ─── POST: Upload Prekeys ───────────────────────────────────────────
-    
+
     app.post("/keys/upload", async (req, reply) => {
       const log = req.log;
       try {
@@ -69,13 +69,10 @@ export function createKeysRoutes(
         }
 
         const {
-          identityKey,
-          signedPreKey,
-          pqSignedPreKey,
-          signedPreKeySignature,
-          pqSignedPreKeySignature,
-          oneTimePreKeys,
-          pqOneTimePreKeys
+          identityKey, signedPreKey, signedPreKeyId,
+          pqSignedPreKey, pqSignedPreKeyId,
+          signedPreKeySignature, pqSignedPreKeySignature,
+          oneTimePreKeys, pqOneTimePreKeys,
         } = parsed.data;
 
         const { error } = await uploadPrekeys(
@@ -83,10 +80,12 @@ export function createKeysRoutes(
           userId,
           {
             identityKey,
-            signedPrekey: signedPreKey,
-            pqSignedPrekey: pqSignedPreKey,
-            signature: signedPreKeySignature,
-            pqSignature: pqSignedPreKeySignature
+            signedPrekey:     signedPreKey,
+            signedPrekeyId:   signedPreKeyId,
+            pqSignedPrekey:   pqSignedPreKey,
+            pqSignedPrekeyId: pqSignedPreKeyId,
+            signature:        signedPreKeySignature,
+            pqSignature:      pqSignedPreKeySignature,
           },
           oneTimePreKeys,
           pqOneTimePreKeys
@@ -105,14 +104,13 @@ export function createKeysRoutes(
       }
     });
 
-    // ─── GET: Fetch Prekey Bundle ───────────────────────────────────────────
-    
+    // ─── GET: Fetch Prekey Bundle ───────────────────────────────────────
+
     app.get("/keys/bundle/:userId", async (req, reply) => {
       const log = req.log;
       const { userId: targetUserId } = req.params as { userId: string };
 
       try {
-        // Authenticate requester
         try {
           verifyAccessToken(req.headers.authorization);
         } catch (err) {
@@ -133,6 +131,52 @@ export function createKeysRoutes(
         return reply.status(200).send({ success: true, bundle });
       } catch (err) {
         log.error({ event: "keys_bundle_error", error: err }, "Unexpected error in keys/bundle");
+        return reply.status(500).send({ success: false, error: "Internal server error" });
+      }
+    });
+
+    // ─── PUT: Rotate Signed Prekey ──────────────────────────────────────
+
+    app.put("/keys/signed-prekey", async (req, reply) => {
+      const log = req.log;
+      try {
+        let userId: string;
+        try {
+          const user = verifyAccessToken(req.headers.authorization);
+          userId = user.sub;
+        } catch (err) {
+          if (err instanceof AuthError) {
+            return reply.status(err.status).send({ success: false, error: req.t("common.errors.auth_required") });
+          }
+          throw err;
+        }
+
+        const parsed = RotateSignedPrekeySchema.safeParse(req.body);
+        if (!parsed.success) {
+          return reply.status(400).send({ success: false, error: parsed.error.flatten().fieldErrors });
+        }
+
+        const { signedPreKey, signedPreKeyId, signedPreKeySignature } = parsed.data;
+
+        const { error } = await (supabase as any)
+          .from("user_prekeys")
+          .update({
+            signed_prekey_public: signedPreKey,
+            signed_prekey_id:     signedPreKeyId,
+            signature:            signedPreKeySignature,
+            updated_at:           new Date().toISOString(),
+          })
+          .eq("user_id", userId);
+
+        if (error) {
+          log.error({ event: "spk_rotation_failure", userId, error }, "Failed to rotate signed prekey");
+          return reply.status(500).send({ success: false, error: "Failed to rotate signed prekey" });
+        }
+
+        log.info({ event: "spk_rotation_success", userId, signedPreKeyId }, "Signed prekey rotated");
+        return reply.status(200).send({ success: true });
+      } catch (err) {
+        log.error({ event: "spk_rotation_error", error: err }, "Unexpected error rotating signed prekey");
         return reply.status(500).send({ success: false, error: "Internal server error" });
       }
     });

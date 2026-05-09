@@ -44,18 +44,6 @@ export const messagesPublishFailuresTotal = new Counter({
   registers: [registry],
 });
 
-export const wsConnectionsTotal = new Counter({
-  name: "ws_connections_total",
-  help: "Total WebSocket connections opened",
-  registers: [registry],
-});
-
-export const wsDisconnectsTotal = new Counter({
-  name: "ws_disconnects_total",
-  help: "Total WebSocket disconnections",
-  registers: [registry],
-});
-
 export function getMetricsRegistry(): Registry {
   return registry;
 }

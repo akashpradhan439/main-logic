@@ -3,12 +3,21 @@ syntax = "proto3";
 package e2ee;
 
 message MessageHeader {
-  bytes dh_public_key = 1;
-  uint32 n = 2;
-  uint32 pn = 3;
+  bytes  dh_public_key = 1;
+  uint32 n             = 2;
+  uint32 pn            = 3;
+}
+
+message BootstrapData {
+  bytes  sender_identity_key  = 1;
+  bytes  sender_ephemeral_key = 2;
+  bytes  pq_ciphertext        = 3;
+  uint32 signed_prekey_id     = 4;
+  uint32 pq_signed_prekey_id  = 5;
 }
 
 message MessageEnvelope {
-  MessageHeader header = 1;
-  bytes ciphertext = 2;
+  MessageHeader header    = 1;
+  bytes         ciphertext = 2;
+  BootstrapData bootstrap  = 3;
 }

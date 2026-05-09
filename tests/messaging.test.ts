@@ -25,7 +25,6 @@ const scenario: {
   messagesResult: { messages: MessageRow[]; error: Error | null };
   publishCalled: boolean;
   publishResult: boolean;
-  wsToken: string;
 } = {
   userId: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
   otherUserId: "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
@@ -40,7 +39,6 @@ const scenario: {
   messagesResult: { messages: [], error: null },
   publishCalled: false,
   publishResult: true,
-  wsToken: "mock-ws-token",
 };
 
 function resetScenario() {
@@ -57,7 +55,6 @@ function resetScenario() {
   scenario.messagesResult = { messages: [], error: null };
   scenario.publishCalled = false;
   scenario.publishResult = true;
-  scenario.wsToken = "mock-ws-token";
 }
 
 // ─── Stubs ────────────────────────────────────────────────────────────────────
@@ -181,13 +178,6 @@ const deps: Partial<MessagingRouteDeps> = {
     iat: 0,
     exp: 0,
   }),
-  signWsToken: () => scenario.wsToken,
-  verifyWsToken: (token) => {
-    if (token === scenario.wsToken) {
-      return { sub: scenario.userId, type: "ws", iat: 0, exp: 0 };
-    }
-    throw new AuthError("Invalid token");
-  },
   AuthError,
   findConnectionBetweenUsers: async () => ({
     row: scenario.connectionRow,
@@ -210,11 +200,6 @@ const deps: Partial<MessagingRouteDeps> = {
     scenario.publishCalled = true;
     return scenario.publishResult;
   },
-  redisSet: async () => {},
-  redisDel: async () => {},
-  redisGet: async () => null,
-  createRedisSubClient: async () => null,
-  getRedisClient: async () => null,
 };
 
 async function buildApp() {
@@ -275,27 +260,19 @@ function makeConnection(status: string, overrides: Partial<ConnectionRow> = {}):
   };
 }
 
+function makeEnvelope() {
+  return {
+    header: {
+      dhPublicKey: Buffer.from([1, 2, 3]).toString("base64"),
+      n: 0,
+      pn: 0,
+    },
+    ciphertext: Buffer.from([4, 5, 6]).toString("base64"),
+  };
+}
+
 beforeEach(() => {
   resetScenario();
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// POST /messaging/ws-token
-// ═══════════════════════════════════════════════════════════════════════════════
-
-test("WS Token: success", async () => {
-  const app = await buildApp();
-  const res = await app.inject({
-    method: "POST",
-    url: "/messaging/ws-token",
-    headers: { authorization: "Bearer test" },
-  });
-
-  assert.equal(res.statusCode, 200);
-  const body = res.json();
-  assert.equal(body.success, true);
-  assert.equal(body.token, scenario.wsToken);
-  await app.close();
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -359,7 +336,6 @@ test("Create conversation: 403 - user is soft blocked", async () => {
 
 test("List conversations: success", async () => {
   const conv = makeConversation();
-  // Mock the joined profiles
   (conv as any).p1 = { first_name: "John", last_name: "Doe" };
   (conv as any).p2 = { first_name: "Jane", last_name: "Smith" };
 
@@ -377,22 +353,93 @@ test("List conversations: success", async () => {
   const body = res.json();
   assert.equal(body.success, true);
   assert.equal(body.conversations.length, 1);
-  
+
   const conversation = body.conversations[0];
   assert.equal(conversation.id, scenario.conversationId);
-  
-  // Verify user names
-  // Since requester is userId and addressee is otherUserId, and userId < otherUserId
-  // participant_one = userId, participant_two = otherUserId
-  // isP1 = true, so otherUserProfile should be conv.p2 (Jane Smith)
   assert.equal(conversation.otherUserFirstName, "Jane");
   assert.equal(conversation.otherUserLastName, "Smith");
-  
-  // Verify last message (mocked as makeMessage in the stub)
   assert.ok(conversation.lastMessage);
-  assert.ok(conversation.lastMessage.envelope);
   assert.deepEqual(conversation.lastMessage.envelope.header.n, 0);
-  
+
+  await app.close();
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// POST /messaging/conversations/:id/messages
+// ═══════════════════════════════════════════════════════════════════════════════
+
+test("Send message: success", async () => {
+  const conv = makeConversation();
+  const msg = makeMessage();
+  scenario.verifyParticipantResult = { isParticipant: true, isBlocked: false, conversation: conv, error: null };
+  scenario.insertMessageResult = { message: msg, error: null };
+
+  const app = await buildApp();
+  const res = await app.inject({
+    method: "POST",
+    url: `/messaging/conversations/${scenario.conversationId}/messages`,
+    headers: { authorization: "Bearer test" },
+    payload: { envelope: makeEnvelope() },
+  });
+
+  assert.equal(res.statusCode, 201);
+  const body = res.json();
+  assert.equal(body.success, true);
+  assert.equal(body.message.conversationId, scenario.conversationId);
+  assert.equal(body.message.senderId, scenario.userId);
+  assert.equal(scenario.publishCalled, true);
+  await app.close();
+});
+
+test("Send message: 403 - not a participant", async () => {
+  scenario.verifyParticipantResult = { isParticipant: false, isBlocked: false, conversation: null, error: null };
+
+  const app = await buildApp();
+  const res = await app.inject({
+    method: "POST",
+    url: `/messaging/conversations/${scenario.conversationId}/messages`,
+    headers: { authorization: "Bearer test" },
+    payload: { envelope: makeEnvelope() },
+  });
+
+  assert.equal(res.statusCode, 403);
+  await app.close();
+});
+
+test("Send message: 403 - blocked", async () => {
+  const conv = makeConversation();
+  scenario.verifyParticipantResult = { isParticipant: true, isBlocked: true, conversation: conv, error: null };
+
+  const app = await buildApp();
+  const res = await app.inject({
+    method: "POST",
+    url: `/messaging/conversations/${scenario.conversationId}/messages`,
+    headers: { authorization: "Bearer test" },
+    payload: { envelope: makeEnvelope() },
+  });
+
+  assert.equal(res.statusCode, 403);
+  await app.close();
+});
+
+test("Send message: 400 - invalid envelope encoding", async () => {
+  const conv = makeConversation();
+  scenario.verifyParticipantResult = { isParticipant: true, isBlocked: false, conversation: conv, error: null };
+
+  const app = await buildApp();
+  const res = await app.inject({
+    method: "POST",
+    url: `/messaging/conversations/${scenario.conversationId}/messages`,
+    headers: { authorization: "Bearer test" },
+    payload: {
+      envelope: {
+        header: { dhPublicKey: null, n: 0, pn: 0 },
+        ciphertext: null,
+      },
+    },
+  });
+
+  assert.equal(res.statusCode, 400);
   await app.close();
 });
 
@@ -428,38 +475,6 @@ test("Get messages: 403 - blocked", async () => {
   });
 
   assert.equal(res.statusCode, 403);
-  await app.close();
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// GET /messaging/conversations/stream
-// ═══════════════════════════════════════════════════════════════════════════════
-
-test("SSE Stream: 401 with missing token", async () => {
-  const app = await buildApp();
-  const res = await app.inject({
-    method: "GET",
-    url: "/messaging/conversations/stream",
-  });
-
-  assert.equal(res.statusCode, 401);
-  const body = res.json();
-  assert.equal(body.success, false);
-  assert.equal(body.error, "common.errors.auth_required");
-  await app.close();
-});
-
-test("SSE Stream: 401 with invalid token", async () => {
-  const app = await buildApp();
-  const res = await app.inject({
-    method: "GET",
-    url: "/messaging/conversations/stream?token=invalid-token",
-  });
-
-  assert.equal(res.statusCode, 401);
-  const body = res.json();
-  assert.equal(body.success, false);
-  assert.equal(body.error, "common.errors.invalid_token");
   await app.close();
 });
 

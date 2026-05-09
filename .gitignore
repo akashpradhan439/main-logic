@@ -31,3 +31,6 @@ Thumbs.db
 # Optional
 coverage/
 .nyc_output/
+.claude/settings.local.json
+CLAUDE.md
+docs/messaging-api.md

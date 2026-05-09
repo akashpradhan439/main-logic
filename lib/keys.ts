@@ -1,65 +1,81 @@
 import { SupabaseClient } from "@supabase/supabase-js";
 
 export interface PrekeyBundle {
-  userId: string;
-  identityKey: string;
-  signedPrekey: string;
-  pqSignedPrekey: string;
-  signature: string;
-  pqSignature: string;
-  oneTimePrekey?: string;
-  pqOneTimePrekey?: string;
+  userId:            string;
+  identityKey:       string;
+  signedPrekey:      string;
+  signedPrekeyId:    number;
+  pqSignedPrekey:    string;
+  pqSignedPrekeyId:  number;
+  signature:         string;
+  pqSignature:       string;
+  oneTimePrekey?:    string;
+  pqOneTimePrekey?:  string;
+  remainingOtpCount: number;
 }
 
 export async function uploadPrekeys(
   supabase: SupabaseClient,
   userId: string,
   bundle: {
-    identityKey: string;
-    signedPrekey: string;
-    pqSignedPrekey: string;
-    signature: string;
-    pqSignature: string;
+    identityKey:      string;
+    signedPrekey:     string;
+    signedPrekeyId:   number;
+    pqSignedPrekey:   string;
+    pqSignedPrekeyId: number;
+    signature:        string;
+    pqSignature:      string;
   },
-  oneTimePrekeys: string[],
+  oneTimePrekeys:   string[],
   pqOneTimePreKeys: string[]
 ) {
-  // 1. Upload/Update user prekeys
   const { error: prekeyError } = await supabase
     .from("user_prekeys")
     .upsert({
-      user_id: userId,
-      identity_key_public: bundle.identityKey,
-      signed_prekey_public: bundle.signedPrekey,
+      user_id:                 userId,
+      identity_key_public:     bundle.identityKey,
+      signed_prekey_public:    bundle.signedPrekey,
+      signed_prekey_id:        bundle.signedPrekeyId,
       pq_signed_prekey_public: bundle.pqSignedPrekey,
-      signature: bundle.signature,
-      pq_signature: bundle.pqSignature,
-      updated_at: new Date().toISOString(),
+      pq_signed_prekey_id:     bundle.pqSignedPrekeyId,
+      signature:               bundle.signature,
+      pq_signature:            bundle.pqSignature,
+      updated_at:              new Date().toISOString(),
     });
 
   if (prekeyError) return { error: prekeyError };
 
-  // 2. Upload one-time prekeys
   const allOTPs = [
-    ...oneTimePrekeys.map(key => ({ user_id: userId, key_public: key, is_pq: false })),
-    ...pqOneTimePreKeys.map(key => ({ user_id: userId, key_public: key, is_pq: true }))
+    ...oneTimePrekeys.map(key  => ({ user_id: userId, key_public: key, is_pq: false })),
+    ...pqOneTimePreKeys.map(key => ({ user_id: userId, key_public: key, is_pq: true  })),
   ];
 
   if (allOTPs.length > 0) {
-    const { error: otpError } = await supabase
-      .from("one_time_prekeys")
-      .insert(allOTPs);
+    const { error: otpError } = await supabase.from("one_time_prekeys").insert(allOTPs);
     if (otpError) return { error: otpError };
   }
 
   return { error: null };
 }
 
+// Atomically marks one unused OPK as used and returns it, avoiding double-use races.
+async function consumeOneTimePrekey(
+  supabase: SupabaseClient,
+  userId: string,
+  isPq: boolean
+): Promise<{ id: string; key_public: string } | null> {
+  const { data, error } = await (supabase as any).rpc("consume_one_time_prekey", {
+    p_user_id: userId,
+    p_is_pq:   isPq,
+  });
+  if (error || !Array.isArray(data) || data.length === 0) return null;
+  return data[0] as { id: string; key_public: string };
+}
+
 export async function getPrekeyBundle(
   supabase: SupabaseClient,
   userId: string
 ): Promise<{ bundle: PrekeyBundle | null; error: any }> {
-  // 1. Fetch user prekeys
   const { data: userPrekeys, error: prekeyError } = await supabase
     .from("user_prekeys")
     .select("*")
@@ -70,44 +86,31 @@ export async function getPrekeyBundle(
     return { bundle: null, error: prekeyError || new Error("Prekeys not found") };
   }
 
-  // 2. Fetch one classical OPK
-  const { data: opk, error: opkError } = await supabase
+  const [opk, pqOpk] = await Promise.all([
+    consumeOneTimePrekey(supabase, userId, false),
+    consumeOneTimePrekey(supabase, userId, true),
+  ]);
+
+  const { count: remainingOtpCount } = await supabase
     .from("one_time_prekeys")
-    .select("id, key_public")
+    .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
     .eq("is_pq", false)
-    .is("used_at", null)
-    .limit(1)
-    .maybeSingle();
-
-  // 3. Fetch one PQ OPK
-  const { data: pqOpk, error: pqOpkError } = await supabase
-    .from("one_time_prekeys")
-    .select("id, key_public")
-    .eq("user_id", userId)
-    .eq("is_pq", true)
-    .is("used_at", null)
-    .limit(1)
-    .maybeSingle();
-
-  // 4. Mark OPKs as used (atomic if possible, but for simplicity here we just update)
-  if (opk) {
-    await supabase.from("one_time_prekeys").update({ used_at: new Date().toISOString() }).eq("id", opk.id);
-  }
-  if (pqOpk) {
-    await supabase.from("one_time_prekeys").update({ used_at: new Date().toISOString() }).eq("id", pqOpk.id);
-  }
+    .is("used_at", null);
 
   return {
     bundle: {
       userId,
-      identityKey: userPrekeys.identity_key_public,
-      signedPrekey: userPrekeys.signed_prekey_public,
-      pqSignedPrekey: userPrekeys.pq_signed_prekey_public,
-      signature: userPrekeys.signature,
-      pqSignature: userPrekeys.pq_signature,
-      oneTimePrekey: opk?.key_public,
-      pqOneTimePrekey: pqOpk?.key_public,
+      identityKey:       userPrekeys.identity_key_public,
+      signedPrekey:      userPrekeys.signed_prekey_public,
+      signedPrekeyId:    userPrekeys.signed_prekey_id ?? 1,
+      pqSignedPrekey:    userPrekeys.pq_signed_prekey_public,
+      pqSignedPrekeyId:  userPrekeys.pq_signed_prekey_id ?? 1,
+      signature:         userPrekeys.signature,
+      pqSignature:       userPrekeys.pq_signature,
+      oneTimePrekey:     opk?.key_public,
+      pqOneTimePrekey:   pqOpk?.key_public,
+      remainingOtpCount: remainingOtpCount ?? 0,
     },
     error: null,
   };

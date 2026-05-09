@@ -1,15 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { WebSocket } from "@fastify/websocket";
 import { supabase } from "../lib/supabase.js";
 import { publishNewMessage } from "../lib/rabbitmq.js";
+import type { MessageEnvelope } from "../shared/types.js";
 import {
   messagesSentTotal,
   messagesPublishFailuresTotal,
-  wsConnectionsTotal,
-  wsDisconnectsTotal,
 } from "../lib/metrics.js";
-import { verifyAccessToken, signWsToken, verifyWsToken, AuthError } from "../shared/auth.js";
+import { verifyAccessToken, AuthError } from "../shared/auth.js";
 import {
   findOrCreateConversation,
   insertMessage,
@@ -20,8 +18,6 @@ import {
   type MessageRow,
 } from "../lib/messaging.js";
 import { findConnectionBetweenUsers, isPairBlocked } from "../lib/connections.js";
-import { redisSet, redisDel, redisGet, createRedisSubClient, getRedisClient } from "../lib/redis.js";
-import { SSEManager } from "../lib/sse.js";
 
 // ─── Zod Schemas ──────────────────────────────────────────────────────────────
 
@@ -34,21 +30,21 @@ const MessageHistoryQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
-const WsIncomingMessageSchema = z.object({
-  type: z.literal("send_message"),
-  conversationId: z.string().uuid(),
+const SendMessageSchema = z.object({
   envelope: z.object({
     header: z.object({
-      dhPublicKey: z.any(), // Will be transformed to Uint8Array if needed, or handled as JSON
+      dhPublicKey: z.any(),
       n: z.number(),
       pn: z.number(),
     }),
-    ciphertext: z.any(), // base64 or Uint8Array
+    ciphertext: z.any(),
     bootstrap: z
       .object({
-        senderIdentityKey: z.string(),
-        senderEphemeralKey: z.string(),
-        pqCiphertext: z.string().optional().nullable(),
+        senderIdentityKey:  z.string().min(1),
+        senderEphemeralKey: z.string().min(1),
+        pqCiphertext:       z.string().min(1),
+        signedPrekeyId:     z.number().int().positive(),
+        pqSignedPrekeyId:   z.number().int().positive(),
       })
       .optional(),
   }),
@@ -92,42 +88,44 @@ function normalizeEnvelopeForStorage(envelope: {
   header: { dhPublicKey: unknown; n: number; pn: number };
   ciphertext: unknown;
   bootstrap?: {
-    senderIdentityKey: string;
+    senderIdentityKey:  string;
     senderEphemeralKey: string;
-    pqCiphertext?: string | null | undefined;
-  } | undefined;
-}) {
+    pqCiphertext:       string;
+    signedPrekeyId:     number;
+    pqSignedPrekeyId:   number;
+  };
+}): MessageEnvelope | null {
   const dhPublicKey = toUint8Array(envelope.header.dhPublicKey);
-  const ciphertext = toUint8Array(envelope.ciphertext);
-  if (!dhPublicKey || !ciphertext) {
-    return null;
-  }
+  const ciphertext  = toUint8Array(envelope.ciphertext);
+  if (!dhPublicKey || !ciphertext) return null;
 
-  return {
-    header: {
-      dhPublicKey,
-      n: envelope.header.n,
-      pn: envelope.header.pn,
-    },
+  const result: MessageEnvelope = {
+    header:    { dhPublicKey, n: envelope.header.n, pn: envelope.header.pn },
     ciphertext,
   };
+
+  if (envelope.bootstrap) {
+    const senderIdentityKey  = toUint8Array(envelope.bootstrap.senderIdentityKey);
+    const senderEphemeralKey = toUint8Array(envelope.bootstrap.senderEphemeralKey);
+    const pqCiphertext       = toUint8Array(envelope.bootstrap.pqCiphertext);
+    if (!senderIdentityKey || !senderEphemeralKey || !pqCiphertext) return null;
+    result.bootstrap = {
+      senderIdentityKey,
+      senderEphemeralKey,
+      pqCiphertext,
+      signedPrekeyId:   envelope.bootstrap.signedPrekeyId,
+      pqSignedPrekeyId: envelope.bootstrap.pqSignedPrekeyId,
+    };
+  }
+
+  return result;
 }
-
-// ─── WebSocket Connection Registry ────────────────────────────────────────────
-
-const wsConnections = new Map<string, WebSocket>();
-
-const REDIS_PRESENCE_PREFIX = "ws:online:";
-const REDIS_PRESENCE_TTL = 120; // seconds
-const HEARTBEAT_INTERVAL_MS = 30_000;
 
 // ─── Dependency Injection ─────────────────────────────────────────────────────
 
 export type MessagingRouteDeps = {
   supabase: typeof supabase;
   verifyAccessToken: typeof verifyAccessToken;
-  signWsToken: typeof signWsToken;
-  verifyWsToken: typeof verifyWsToken;
   AuthError: typeof AuthError;
   findConnectionBetweenUsers: typeof findConnectionBetweenUsers;
   isPairBlocked: typeof isPairBlocked;
@@ -137,11 +135,6 @@ export type MessagingRouteDeps = {
   verifyConversationParticipant: typeof verifyConversationParticipant;
   getOtherParticipant: typeof getOtherParticipant;
   publishNewMessage: typeof publishNewMessage;
-  redisSet: typeof redisSet;
-  redisDel: typeof redisDel;
-  redisGet: typeof redisGet;
-  createRedisSubClient: typeof createRedisSubClient;
-  getRedisClient: typeof getRedisClient;
 };
 
 export function createMessagingRoutes(
@@ -150,8 +143,6 @@ export function createMessagingRoutes(
   const deps: MessagingRouteDeps = {
     supabase,
     verifyAccessToken,
-    signWsToken,
-    verifyWsToken,
     AuthError,
     findConnectionBetweenUsers,
     isPairBlocked,
@@ -161,11 +152,6 @@ export function createMessagingRoutes(
     verifyConversationParticipant,
     getOtherParticipant,
     publishNewMessage,
-    redisSet,
-    redisDel,
-    redisGet,
-    createRedisSubClient,
-    getRedisClient,
     ...overrides,
   };
 
@@ -173,8 +159,6 @@ export function createMessagingRoutes(
     const {
       supabase,
       verifyAccessToken,
-      signWsToken,
-      verifyWsToken,
       AuthError,
       findConnectionBetweenUsers,
       isPairBlocked,
@@ -184,62 +168,7 @@ export function createMessagingRoutes(
       verifyConversationParticipant,
       getOtherParticipant,
       publishNewMessage,
-      redisSet,
-      redisDel,
-      createRedisSubClient,
-      getRedisClient,
     } = deps;
-
-    // ─── SSE Manager ──────────────────────────────────────────────────────
-    const sseManager = new SSEManager();
-
-    // Set up Redis Subscriber for cross-instance SSE notifications
-    let subClientInstance: any = null;
-    createRedisSubClient().then((subClient) => {
-      if (!subClient) {
-        app.log.info({ event: "sse_redis_skip" }, "Skipping Redis subscriber for SSE (Redis disabled or unavailable)");
-        return;
-      }
-      subClientInstance = subClient;
-      subClient.subscribe("conversation_updated", (message) => {
-        try {
-          const { userIds, data } = JSON.parse(message);
-          sseManager.notifyUsers(userIds, data);
-        } catch (err) {
-          app.log.error({ event: "sse_redis_parse_error", err }, "Failed to parse Redis message for SSE");
-        }
-      });
-    }).catch((err) => {
-      app.log.error({ event: "sse_redis_sub_error", err }, "Failed to initialize Redis subscriber for SSE");
-    });
-
-    // ─── REST: WS Token ──────────────────────────────────────────────────
-
-    app.post("/messaging/ws-token", async (req, reply) => {
-      const requestId = req.id;
-      const log = req.log;
-
-      try {
-        let userId: string;
-        try {
-          const user = verifyAccessToken(req.headers.authorization);
-          userId = user.sub;
-        } catch (err) {
-          if (err instanceof AuthError) {
-            return reply.status(err.status).send({ success: false, error: req.t("common.errors.auth_required") });
-          }
-          throw err;
-        }
-
-        const token = signWsToken(userId);
-        log.info({ event: "ws_token_generated", userId, requestId }, "WS token generated");
-
-        return reply.status(200).send({ success: true, token });
-      } catch (err) {
-        log.error({ event: "ws_token_error", requestId, err }, "Error generating WS token");
-        return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
-      }
-    });
 
     // ─── REST: Create / Get Conversation ──────────────────────────────────
 
@@ -277,7 +206,6 @@ export function createMessagingRoutes(
           "Creating conversation"
         );
 
-        // Verify users are connected
         const { row: connection, error: connError } = await findConnectionBetweenUsers(
           supabase, userId, otherUserId
         );
@@ -312,22 +240,6 @@ export function createMessagingRoutes(
           "Conversation ready"
         );
 
-        if (created) {
-          getRedisClient().then((redis) => {
-            if (!redis) return;
-            redis.publish("conversation_updated", JSON.stringify({ 
-              userIds: [userId, otherUserId],
-              data: {
-                type: "conversation_created",
-                conversationId: conversation.id,
-              }
-            }));
-          }).catch((err) => {
-            log.error({ event: "sse_publish_error", err }, "Failed to publish conversation update to Redis");
-          });
-        }
-
-        // Unified response format
         return reply.status(created ? 201 : 200).send({
           success: true,
           conversation: {
@@ -370,10 +282,10 @@ export function createMessagingRoutes(
         const { data, error } = await supabase
           .from("conversations")
           .select(`
-            id, 
-            participant_one, 
-            participant_two, 
-            created_at, 
+            id,
+            participant_one,
+            participant_two,
+            created_at,
             updated_at,
             p1:users!participant_one(first_name, last_name),
             p2:users!participant_two(first_name, last_name)
@@ -394,7 +306,6 @@ export function createMessagingRoutes(
           const otherUserId = isP1 ? conv.participant_two : conv.participant_one;
           const otherUserProfile = isP1 ? conv.p2 : conv.p1;
 
-          // Fetch latest message for this conversation
           const { data: lastMsg } = await supabase
             .from("messages")
             .select("id, envelope, sender_id, created_at, attachment_url, attachment_type")
@@ -436,35 +347,132 @@ export function createMessagingRoutes(
       }
     });
 
-    // ─── SSE: Conversation List Updates ───────────────────────────────────
+    // ─── REST: Send Message ───────────────────────────────────────────────
 
-    app.get("/messaging/conversations/stream", async (req, reply) => {
+    app.post("/messaging/conversations/:id/messages", async (req, reply) => {
       const requestId = req.id;
       const log = req.log;
+      const { id: conversationId } = req.params as { id: string };
 
       try {
-        // Authenticate via short-lived WS token
-        const url = new URL(req.url, `http://${req.headers.host}`);
-        const token = url.searchParams.get("token");
-
-        if (!token) {
-          log.info({ event: "sse_auth_no_token", requestId }, "SSE connection attempt with no token");
-          return reply.status(401).send({ success: false, error: req.t("common.errors.auth_required") });
-        }
-
         let userId: string;
         try {
-          const payload = verifyWsToken(token);
-          userId = payload.sub;
+          const user = verifyAccessToken(req.headers.authorization);
+          userId = user.sub;
         } catch (err) {
-          log.info({ event: "sse_auth_failed", requestId, err }, "SSE authentication failed");
-          return reply.status(401).send({ success: false, error: req.t("common.errors.invalid_token") });
+          if (err instanceof AuthError) {
+            return reply.status(err.status).send({ success: false, error: req.t("common.errors.auth_required") });
+          }
+          throw err;
         }
 
-        log.info({ event: "sse_connect", userId, requestId }, "SSE connection established");
-        sseManager.addClient(userId, reply);
+        const parsed = SendMessageSchema.safeParse(req.body);
+        if (!parsed.success) {
+          return reply.status(400).send({ success: false, error: parsed.error.flatten().fieldErrors });
+        }
+
+        const { envelope, attachmentUrl, attachmentType } = parsed.data;
+        const normalizedEnvelope = normalizeEnvelopeForStorage(envelope);
+        if (!normalizedEnvelope) {
+          return reply.status(400).send({ success: false, error: req.t("messaging.errors.invalid_envelope") });
+        }
+
+        const { isParticipant, isBlocked, conversation, error: verifyError } = await verifyConversationParticipant(
+          supabase, conversationId, userId
+        );
+
+        if (verifyError) {
+          log.error(
+            { event: "send_message_verify_error", conversationId, userId, requestId, err: verifyError.message },
+            "Failed to verify participant"
+          );
+          return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
+        }
+
+        if (!isParticipant || !conversation) {
+          return reply.status(403).send({ success: false, error: req.t("messaging.errors.not_participant") });
+        }
+
+        if (isBlocked) {
+          return reply.status(403).send({ success: false, error: req.t("messaging.errors.blocked_send") });
+        }
+
+        const { message, error: insertError } = await insertMessage(
+          supabase,
+          conversationId,
+          userId,
+          normalizedEnvelope,
+          attachmentUrl,
+          attachmentType,
+          log
+        );
+
+        if (insertError || !message) {
+          log.error(
+            { event: "send_message_insert_error", conversationId, userId, requestId },
+            "Failed to insert message"
+          );
+          return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
+        }
+
+        messagesSentTotal.inc();
+
+        const recipientId = getOtherParticipant(conversation, userId);
+        if (recipientId) {
+          try {
+            const published = await publishNewMessage(
+              {
+                conversationId,
+                messageId: message.id,
+                senderId: userId,
+                recipientId,
+                envelope,
+                attachmentUrl: message.attachment_url,
+                attachmentType: message.attachment_type,
+                createdAt: message.created_at,
+                requestId,
+              },
+              log
+            );
+
+            if (!published) {
+              messagesPublishFailuresTotal.inc();
+              log.error(
+                { event: "send_message_publish_failed", userId, recipientId, messageId: message.id, requestId },
+                "Failed to publish message to RabbitMQ"
+              );
+            }
+          } catch (publishErr) {
+            messagesPublishFailuresTotal.inc();
+            log.error(
+              { event: "send_message_publish_error", userId, recipientId, messageId: message.id, requestId, err: publishErr },
+              "Error publishing message to RabbitMQ"
+            );
+          }
+        }
+
+        log.info(
+          { event: "send_message_success", conversationId, userId, messageId: message.id, requestId },
+          "Message sent"
+        );
+
+        return reply.status(201).send({
+          success: true,
+          message: {
+            id: message.id,
+            conversationId,
+            senderId: userId,
+            envelope,
+            attachmentUrl: message.attachment_url,
+            attachmentType: message.attachment_type,
+            createdAt: message.created_at,
+          },
+        });
       } catch (err) {
-        log.error({ event: "sse_connect_error", requestId, err }, "Error establishing SSE connection");
+        log.error(
+          { event: "send_message_error", requestId, err },
+          "Unexpected error sending message"
+        );
         return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
       }
     });
@@ -488,7 +496,6 @@ export function createMessagingRoutes(
           throw err;
         }
 
-        // Verify user is a participant and not blocked
         const { isParticipant, isBlocked, error: verifyError } = await verifyConversationParticipant(
           supabase, conversationId, userId
         );
@@ -544,333 +551,6 @@ export function createMessagingRoutes(
         );
         return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
       }
-    });
-
-    // ─── WebSocket: Real-time Messaging ───────────────────────────────────
-
-    await app.register(import("@fastify/websocket"));
-
-    app.get("/messaging/ws", { websocket: true }, (socket, req) => {
-      const requestId = req.id;
-      const log = req.log;
-
-      // Authenticate via short-lived WS token
-      const url = new URL(req.url, `http://${req.headers.host}`);
-      const token = url.searchParams.get("token");
-      let userId: string;
-
-      if (!token) {
-        log.info({ event: "ws_auth_no_token", requestId }, "WebSocket connection attempt with no token");
-        socket.send(JSON.stringify({ type: "error", message: req.t("common.errors.auth_required") }));
-        socket.close(4001, "Token required");
-        return;
-      }
-
-      try {
-        const payload = verifyWsToken(token);
-        userId = payload.sub;
-      } catch (err) {
-        log.info({ event: "ws_auth_failed", requestId, err }, "WebSocket authentication failed");
-        socket.send(JSON.stringify({ type: "error", message: req.t("common.errors.invalid_token") }));
-        socket.close(4001, "Authentication failed");
-        return;
-      }
-
-      // Close any existing connection for this user (single-session enforcement)
-      const existingSocket = wsConnections.get(userId);
-      if (existingSocket) {
-        log.info({ event: "ws_session_replaced", userId, requestId }, "Replacing existing WebSocket session");
-        existingSocket.close(4002, "Session replaced");
-      }
-
-      wsConnections.set(userId, socket);
-      wsConnectionsTotal.inc();
-
-      // Set Redis presence
-      redisSet(`${REDIS_PRESENCE_PREFIX}${userId}`, "1", REDIS_PRESENCE_TTL).catch((err) => {
-        log.error({ event: "ws_redis_presence_error", userId, err }, "Failed to set Redis presence");
-      });
-
-      log.info(
-        { event: "ws_connect", userId, requestId, activeConnections: wsConnections.size },
-        "WebSocket connected"
-      );
-
-      // ─── Heartbeat ────────────────────────────────────────────────────────
-
-      let isAlive = true;
-      const heartbeatInterval = setInterval(() => {
-        if (!isAlive) {
-          log.info({ event: "ws_heartbeat_timeout", userId }, "WebSocket heartbeat timeout, closing");
-          clearInterval(heartbeatInterval);
-          socket.close(4003, "Heartbeat timeout");
-          return;
-        }
-        isAlive = false;
-        socket.ping();
-      }, HEARTBEAT_INTERVAL_MS);
-
-      socket.on("pong", () => {
-        isAlive = true;
-        // Refresh Redis presence TTL
-        redisSet(`${REDIS_PRESENCE_PREFIX}${userId}`, "1", REDIS_PRESENCE_TTL).catch(() => {});
-      });
-
-      // ─── Message Handling ─────────────────────────────────────────────────
-
-      socket.on("message", async (rawData) => {
-        const messageRequestId = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-        try {
-          const parsed = JSON.parse(rawData.toString());
-          const validated = WsIncomingMessageSchema.safeParse(parsed);
-
-          if (!validated.success) {
-            socket.send(JSON.stringify({
-              type: "error",
-              message: "Invalid message format",
-              errors: validated.error.flatten().fieldErrors,
-            }));
-            return;
-          }
-
-          const { conversationId, envelope, attachmentUrl, attachmentType } = validated.data;
-          const normalizedEnvelope = normalizeEnvelopeForStorage(envelope);
-          if (!normalizedEnvelope) {
-            socket.send(JSON.stringify({
-              type: "error",
-              code: "generic_failure",
-              message: "Invalid envelope encoding",
-            }));
-            return;
-          }
-
-          log.info(
-            {
-              event: "ws_message_received",
-              userId,
-              conversationId,
-              hasEnvelope: !!envelope,
-              hasAttachment: attachmentUrl !== null,
-              requestId: messageRequestId,
-            },
-            "WebSocket message received"
-          );
-
-          // Verify sender is participant and not blocked
-          const { isParticipant, isBlocked, conversation, error: verifyError } = await verifyConversationParticipant(
-            supabase, conversationId, userId
-          );
-
-          if (verifyError || !isParticipant || !conversation) {
-            socket.send(JSON.stringify({
-              type: "error",
-              message: req.t("messaging.errors.not_participant"),
-            }));
-            return;
-          }
-
-          if (isBlocked) {
-            socket.send(JSON.stringify({
-              type: "error",
-              message: req.t("messaging.errors.blocked_send"),
-            }));
-            return;
-          }
-
-          // Insert into DB
-          const { message, error: insertError } = await insertMessage(
-            supabase,
-            conversationId,
-            userId,
-            normalizedEnvelope as any,
-            attachmentUrl,
-            attachmentType,
-            log
-          );
-
-          if (insertError || !message) {
-            socket.send(JSON.stringify({
-              type: "error",
-              code: "generic_failure",
-              message: req.t("common.errors.unable_to_process"),
-            }));
-            return;
-          }
-
-          messagesSentTotal.inc();
-
-          // ACK to sender
-          socket.send(JSON.stringify({
-            type: "message_ack",
-            messageId: message.id,
-            conversationId,
-            createdAt: message.created_at,
-          }));
-
-          // Determine recipient
-          const recipientId = getOtherParticipant(conversation, userId);
-          if (!recipientId) {
-            log.error(
-              { event: "ws_no_recipient", userId, conversationId, requestId: messageRequestId },
-              "Could not determine recipient"
-            );
-            return;
-          }
-
-          // Trigger SSE update via Redis
-          getRedisClient().then((redis) => {
-            if (!redis) return;
-            redis.publish("conversation_updated", JSON.stringify({ 
-              userIds: [userId, recipientId],
-              data: {
-                type: "conversation_updated",
-                conversationId,
-                lastMessage: {
-                  id: message.id,
-                  envelope: envelope, // Use structured envelope instead of binary
-                  senderId: userId,
-                  createdAt: message.created_at,
-                  attachmentUrl: message.attachment_url,
-                  attachmentType: message.attachment_type,
-                }
-              }
-            }));
-          }).catch((err) => {
-            log.error({ event: "sse_publish_error", err }, "Failed to publish conversation update to Redis");
-          });
-
-          // Construct outgoing message payload
-          const outgoingPayload = {
-            type: "new_message",
-            messageId: message.id,
-            conversationId,
-            senderId: userId,
-            envelope: envelope, // Use structured envelope instead of binary
-            attachmentUrl: message.attachment_url,
-            attachmentType: message.attachment_type,
-            createdAt: message.created_at,
-          };
-
-          // Try to deliver directly to recipient on this instance
-          const recipientSocket = wsConnections.get(recipientId);
-          if (recipientSocket && recipientSocket.readyState === 1) {
-            recipientSocket.send(JSON.stringify(outgoingPayload));
-            log.info(
-              {
-                event: "ws_message_delivered",
-                userId,
-                recipientId,
-                messageId: message.id,
-                conversationId,
-                delivery: "local",
-                requestId: messageRequestId,
-              },
-              "Message delivered locally"
-            );
-            return;
-          }
-
-          // Recipient not on this instance — publish to RabbitMQ for cross-instance delivery or offline push
-          try {
-            const published = await publishNewMessage(
-              {
-                conversationId,
-                messageId: message.id,
-                senderId: userId,
-                recipientId,
-                envelope: envelope, // Use structured envelope instead of binary
-                attachmentUrl: message.attachment_url,
-                attachmentType: message.attachment_type,
-                createdAt: message.created_at,
-                requestId: messageRequestId,
-              },
-              log
-            );
-
-            if (!published) {
-              messagesPublishFailuresTotal.inc();
-              log.error(
-                {
-                  event: "ws_message_publish_failed",
-                  userId,
-                  recipientId,
-                  messageId: message.id,
-                  requestId: messageRequestId,
-                },
-                "Failed to publish message to RabbitMQ"
-              );
-            } else {
-              log.info(
-                {
-                  event: "ws_message_offline",
-                  userId,
-                  recipientId,
-                  messageId: message.id,
-                  conversationId,
-                  requestId: messageRequestId,
-                },
-                "Message published for offline/cross-instance delivery"
-              );
-            }
-          } catch (publishErr) {
-            messagesPublishFailuresTotal.inc();
-            log.error(
-              {
-                event: "ws_message_publish_error",
-                userId,
-                recipientId,
-                messageId: message.id,
-                requestId: messageRequestId,
-                err: publishErr,
-              },
-              "Error publishing message to RabbitMQ"
-            );
-          }
-        } catch (err) {
-          log.error(
-            { event: "ws_message_processing_error", userId, requestId: messageRequestId, err },
-            "Error processing WebSocket message"
-          );
-          socket.send(JSON.stringify({ type: "error", message: req.t("common.errors.unable_to_process") }));
-        }
-      });
-
-      // ─── Disconnect Handling ──────────────────────────────────────────────
-
-      socket.on("close", () => {
-        clearInterval(heartbeatInterval);
-        wsConnections.delete(userId);
-        wsDisconnectsTotal.inc();
-
-        redisDel(`${REDIS_PRESENCE_PREFIX}${userId}`).catch((err) => {
-          log.error({ event: "ws_redis_presence_cleanup_error", userId, err }, "Failed to clear Redis presence");
-        });
-
-        log.info(
-          { event: "ws_disconnect", userId, requestId, activeConnections: wsConnections.size },
-          "WebSocket disconnected"
-        );
-      });
-
-      socket.on("error", (err) => {
-        log.error({ event: "ws_error", userId, requestId, err }, "WebSocket error");
-      });
-    });
-
-    // ─── Graceful Shutdown ──────────────────────────────────────────────────
-
-    app.addHook("onClose", async () => {
-      if (subClientInstance) {
-        await subClientInstance.quit().catch(() => {});
-        app.log.info({ event: "sse_redis_shutdown" }, "Redis subscriber connection closed");
-      }
-      for (const [userId, socket] of wsConnections) {
-        socket.close(1001, "Server shutting down");
-        await redisDel(`${REDIS_PRESENCE_PREFIX}${userId}`).catch(() => {});
-      }
-      wsConnections.clear();
-      app.log.info({ event: "ws_shutdown", message: "All WebSocket connections closed" }, "WebSocket shutdown complete");
     });
   };
 }

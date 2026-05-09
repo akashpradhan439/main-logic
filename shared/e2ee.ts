@@ -83,10 +83,13 @@ export async function initiateHandshake(
   const { sharedSecret: pqSecret, ciphertext: pqCiphertext } = pqEncapsulate(targetPQKey);
 
   // 5. Combine secrets using HKDF
+  // F is the 32-byte domain-separation constant required by X3DH/PQXDH spec (all 0xFF for Curve25519)
+  const F = new Uint8Array(32).fill(0xff);
   const combined = new Uint8Array(
-    dh1.length + dh2.length + dh3.length + (dh4 ? dh4.length : 0) + pqSecret.length
+    F.length + dh1.length + dh2.length + dh3.length + (dh4 ? dh4.length : 0) + pqSecret.length
   );
   let offset = 0;
+  combined.set(F, offset);   offset += F.length;
   combined.set(dh1, offset); offset += dh1.length;
   combined.set(dh2, offset); offset += dh2.length;
   combined.set(dh3, offset); offset += dh3.length;
@@ -145,10 +148,12 @@ export async function respondToHandshake(
   }
 
   // 3. Combine secrets
+  const F = new Uint8Array(32).fill(0xff);
   const combined = new Uint8Array(
-    dh1.length + dh2.length + dh3.length + (dh4 ? dh4.length : 0) + pqSecret.length
+    F.length + dh1.length + dh2.length + dh3.length + (dh4 ? dh4.length : 0) + pqSecret.length
   );
   let offset = 0;
+  combined.set(F, offset);   offset += F.length;
   combined.set(dh1, offset); offset += dh1.length;
   combined.set(dh2, offset); offset += dh2.length;
   combined.set(dh3, offset); offset += dh3.length;
