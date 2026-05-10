@@ -1,6 +1,5 @@
 import amqp, { type Channel, type ChannelModel } from "amqplib";
 import { config } from "../config.js";
-import type { MessageEnvelope } from "../shared/types.js";
 
 export interface LocationUpdatedEvent {
   userId: string;
@@ -25,7 +24,7 @@ export interface NewMessageEvent {
   messageId: string;
   senderId: string;
   recipientId: string;
-  envelope: MessageEnvelope;
+  envelope: unknown;
   attachmentUrl: string | null;
   attachmentType: string | null;
   createdAt: string;

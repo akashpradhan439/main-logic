@@ -93,7 +93,7 @@ function normalizeEnvelopeForStorage(envelope: {
     pqCiphertext:       string;
     signedPrekeyId:     number;
     pqSignedPrekeyId:   number;
-  };
+  } | undefined;
 }): MessageEnvelope | null {
   const dhPublicKey = toUint8Array(envelope.header.dhPublicKey);
   const ciphertext  = toUint8Array(envelope.ciphertext);
