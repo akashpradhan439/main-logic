@@ -8,6 +8,7 @@ import { uploadPrekeys, getPrekeyBundle } from "../lib/keys.js";
 
 const UploadKeysSchema = z.object({
   identityKey:             z.string().min(1),
+  identitySigningKey:      z.string().min(1),
   signedPreKey:            z.string().min(1),
   signedPreKeyId:          z.number().int().positive().default(1),
   pqSignedPreKey:          z.string().min(1),
@@ -69,7 +70,7 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
         }
 
         const {
-          identityKey, signedPreKey, signedPreKeyId,
+          identityKey, identitySigningKey, signedPreKey, signedPreKeyId,
           pqSignedPreKey, pqSignedPreKeyId,
           signedPreKeySignature, pqSignedPreKeySignature,
           oneTimePreKeys, pqOneTimePreKeys,
@@ -80,6 +81,7 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
           userId,
           {
             identityKey,
+            identitySigningKey,
             signedPrekey:     signedPreKey,
             signedPrekeyId:   signedPreKeyId,
             pqSignedPrekey:   pqSignedPreKey,

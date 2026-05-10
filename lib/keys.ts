@@ -3,6 +3,7 @@ import { SupabaseClient } from "@supabase/supabase-js";
 export interface PrekeyBundle {
   userId:            string;
   identityKey:       string;
+  identitySigningKey: string;
   signedPrekey:      string;
   signedPrekeyId:    number;
   pqSignedPrekey:    string;
@@ -18,8 +19,9 @@ export async function uploadPrekeys(
   supabase: SupabaseClient,
   userId: string,
   bundle: {
-    identityKey:      string;
-    signedPrekey:     string;
+    identityKey:       string;
+    identitySigningKey: string;
+    signedPrekey:      string;
     signedPrekeyId:   number;
     pqSignedPrekey:   string;
     pqSignedPrekeyId: number;
@@ -33,8 +35,9 @@ export async function uploadPrekeys(
     .from("user_prekeys")
     .upsert({
       user_id:                 userId,
-      identity_key_public:     bundle.identityKey,
-      signed_prekey_public:    bundle.signedPrekey,
+      identity_key_public:          bundle.identityKey,
+      identity_signing_key_public:  bundle.identitySigningKey,
+      signed_prekey_public:         bundle.signedPrekey,
       signed_prekey_id:        bundle.signedPrekeyId,
       pq_signed_prekey_public: bundle.pqSignedPrekey,
       pq_signed_prekey_id:     bundle.pqSignedPrekeyId,
@@ -101,8 +104,9 @@ export async function getPrekeyBundle(
   return {
     bundle: {
       userId,
-      identityKey:       userPrekeys.identity_key_public,
-      signedPrekey:      userPrekeys.signed_prekey_public,
+      identityKey:        userPrekeys.identity_key_public,
+      identitySigningKey: userPrekeys.identity_signing_key_public,
+      signedPrekey:       userPrekeys.signed_prekey_public,
       signedPrekeyId:    userPrekeys.signed_prekey_id ?? 1,
       pqSignedPrekey:    userPrekeys.pq_signed_prekey_public,
       pqSignedPrekeyId:  userPrekeys.pq_signed_prekey_id ?? 1,
