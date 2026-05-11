@@ -5,6 +5,7 @@ import metricsRoutes from "./metrics.js";
 import connectionsRoutes from "./connections.js";
 import messagingRoutes from "./messaging.js";
 import keysRoutes from "./keys.js";
+import sseRoutes from "./sse.js";
 
 export default async function registerRoutes(app: FastifyInstance) {
   app.register(healthRoutes);
@@ -13,4 +14,5 @@ export default async function registerRoutes(app: FastifyInstance) {
   app.register(connectionsRoutes);
   app.register(messagingRoutes);
   app.register(keysRoutes);
+  app.register(sseRoutes);
 }

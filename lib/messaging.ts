@@ -218,6 +218,56 @@ export async function getConversationMessages(
 }
 
 /**
+ * Async generator that yields missed messages for a user across all their conversations,
+ * ordered by created_at ASC, in batches. Used by the SSE catch-up phase on reconnect.
+ */
+export async function* getMessagesSinceCursor(
+  client: SupabaseClient,
+  userId: string,
+  cursor: string,
+  batchSize: number = 50
+): AsyncGenerator<MessageRow[], void, unknown> {
+  const { data: convData } = await client
+    .from("conversations")
+    .select("id")
+    .or(`participant_one.eq.${userId},participant_two.eq.${userId}`);
+
+  const conversationIds = (convData ?? []).map((c: { id: string }) => c.id);
+  if (conversationIds.length === 0) return;
+
+  let offset = 0;
+  while (true) {
+    const { data, error } = await client
+      .from("messages")
+      .select("id, conversation_id, sender_id, envelope, attachment_url, attachment_type, created_at")
+      .in("conversation_id", conversationIds)
+      .gt("created_at", cursor)
+      .order("created_at", { ascending: true })
+      .range(offset, offset + batchSize - 1);
+
+    if (error || !data || data.length === 0) break;
+
+    const messages: MessageRow[] = (data as Array<{
+      id: string;
+      conversation_id: string;
+      sender_id: string;
+      envelope: string;
+      attachment_url: string | null;
+      attachment_type: string | null;
+      created_at: string;
+    }>).map((m) => ({
+      ...m,
+      envelope: Buffer.from(m.envelope, "base64"),
+    }));
+
+    yield messages;
+
+    if (data.length < batchSize) break;
+    offset += batchSize;
+  }
+}
+
+/**
  * Verifies a user is a participant in a conversation and checks if they are blocked.
  */
 export async function verifyConversationParticipant(

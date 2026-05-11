@@ -18,6 +18,7 @@ import {
   type MessageRow,
 } from "../lib/messaging.js";
 import { findConnectionBetweenUsers, isPairBlocked } from "../lib/connections.js";
+import { getConnection } from "../lib/sseManager.js";
 
 // ─── Zod Schemas ──────────────────────────────────────────────────────────────
 
@@ -419,35 +420,58 @@ export function createMessagingRoutes(
 
         const recipientId = getOtherParticipant(conversation, userId);
         if (recipientId) {
-          try {
-            const published = await publishNewMessage(
-              {
-                conversationId,
-                messageId: message.id,
-                senderId: userId,
-                recipientId,
-                envelope,
-                attachmentUrl: message.attachment_url,
-                attachmentType: message.attachment_type,
-                createdAt: message.created_at,
-                requestId,
-              },
-              log
+          const sseConn = getConnection(recipientId);
+          if (sseConn) {
+            const sseEvent = {
+              type: "new_message",
+              conversationId,
+              messageId: message.id,
+              senderId: userId,
+              envelope: Buffer.from(message.envelope).toString("base64"),
+              attachmentUrl: message.attachment_url,
+              attachmentType: message.attachment_type,
+              createdAt: message.created_at,
+            };
+            if (sseConn.isLive) {
+              sseConn.send("message", sseEvent, message.id);
+            } else {
+              sseConn.buffer.push({ eventId: message.id, data: sseEvent });
+            }
+            log.info(
+              { event: "send_message_sse_delivered", userId, recipientId, messageId: message.id, requestId, buffered: !sseConn.isLive },
+              "Message delivered via SSE"
             );
+          } else {
+            try {
+              const published = await publishNewMessage(
+                {
+                  conversationId,
+                  messageId: message.id,
+                  senderId: userId,
+                  recipientId,
+                  envelope,
+                  attachmentUrl: message.attachment_url,
+                  attachmentType: message.attachment_type,
+                  createdAt: message.created_at,
+                  requestId,
+                },
+                log
+              );
 
-            if (!published) {
+              if (!published) {
+                messagesPublishFailuresTotal.inc();
+                log.error(
+                  { event: "send_message_publish_failed", userId, recipientId, messageId: message.id, requestId },
+                  "Failed to publish message to RabbitMQ"
+                );
+              }
+            } catch (publishErr) {
               messagesPublishFailuresTotal.inc();
               log.error(
-                { event: "send_message_publish_failed", userId, recipientId, messageId: message.id, requestId },
-                "Failed to publish message to RabbitMQ"
+                { event: "send_message_publish_error", userId, recipientId, messageId: message.id, requestId, err: publishErr },
+                "Error publishing message to RabbitMQ"
               );
             }
-          } catch (publishErr) {
-            messagesPublishFailuresTotal.inc();
-            log.error(
-              { event: "send_message_publish_error", userId, recipientId, messageId: message.id, requestId, err: publishErr },
-              "Error publishing message to RabbitMQ"
-            );
           }
         }
 
