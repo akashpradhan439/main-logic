@@ -1,7 +1,7 @@
 export type BufferItem = { eventId: string; data: unknown };
 
 export type ConnectionState = {
-  send: (event: string, data: unknown, id?: string) => void;
+  send: (event: string, data: unknown, id?: string) => boolean;
   buffer: BufferItem[];
   isLive: boolean;
 };

@@ -421,6 +421,7 @@ export function createMessagingRoutes(
         const recipientId = getOtherParticipant(conversation, userId);
         if (recipientId) {
           const sseConn = getConnection(recipientId);
+          let sseSent = false;
           if (sseConn) {
             const sseEvent = {
               type: "new_message",
@@ -433,15 +434,26 @@ export function createMessagingRoutes(
               createdAt: message.created_at,
             };
             if (sseConn.isLive) {
-              sseConn.send("message", sseEvent, message.id);
+              sseSent = sseConn.send("message", sseEvent, message.id);
+              if (!sseSent) {
+                log.warn(
+                  { event: "send_message_sse_stream_dead", userId, recipientId, messageId: message.id, requestId },
+                  "SSE stream was dead; falling back to RabbitMQ"
+                );
+              }
             } else {
               sseConn.buffer.push({ eventId: message.id, data: sseEvent });
+              sseSent = true;
             }
-            log.info(
-              { event: "send_message_sse_delivered", userId, recipientId, messageId: message.id, requestId, buffered: !sseConn.isLive },
-              "Message delivered via SSE"
-            );
-          } else {
+            if (sseSent) {
+              log.info(
+                { event: "send_message_sse_delivered", userId, recipientId, messageId: message.id, requestId, buffered: !sseConn.isLive },
+                "Message delivered via SSE"
+              );
+            }
+          }
+
+          if (!sseSent) {
             try {
               const published = await publishNewMessage(
                 {
