@@ -68,7 +68,7 @@ export default async function sseRoutes(app: FastifyInstance) {
               conversationId: msg.conversation_id,
               messageId: msg.id,
               senderId: msg.sender_id,
-              envelope: Buffer.from(msg.envelope).toString("base64"),
+              envelope: msg.envelope,
               attachmentUrl: msg.attachment_url,
               attachmentType: msg.attachment_type,
               createdAt: msg.created_at,

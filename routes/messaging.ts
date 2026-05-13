@@ -428,7 +428,7 @@ export function createMessagingRoutes(
               conversationId,
               messageId: message.id,
               senderId: userId,
-              envelope: Buffer.from(message.envelope).toString("base64"),
+              envelope: message.envelope,
               attachmentUrl: message.attachment_url,
               attachmentType: message.attachment_type,
               createdAt: message.created_at,
