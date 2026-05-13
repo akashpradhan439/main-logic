@@ -14,7 +14,7 @@
     "worker:location:prod": "node dist/workers/locationUpdatedWorker.js",
     "worker:notifications:prod": "node dist/workers/pushNotificationWorker.js",
     "worker:messaging:prod": "node dist/workers/messagingWorker.js",
-    "test": "node --test --import tsx tests/connections-qr-scan.test.ts tests/messaging.test.ts"
+    "test": "node --test --import tsx tests/connections-qr-scan.test.ts tests/messaging.test.ts tests/sse.test.ts"
   },
   "author": "",
   "license": "ISC",
