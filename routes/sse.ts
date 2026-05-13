@@ -42,7 +42,8 @@ export function createSseRoutes(overrides: Partial<SseRouteDeps> = {}) {
       function send(event: string, data: unknown, id?: string): boolean {
         if (!reply.raw.writableEnded && !reply.raw.destroyed) {
           const idLine = id ? `id: ${id}\n` : "";
-          reply.raw.write(`${idLine}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+          reply.raw.write(`${idLine}event: ${event}\ndata: ${JSON.stringify(data)}\n`);
+          reply.raw.write(`\n`);
           return true;
         }
         return false;
