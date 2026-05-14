@@ -35,18 +35,16 @@ function parseSseStream(res: http.IncomingMessage): {
 
   res.on("data", (chunk: Buffer) => {
     buf += chunk.toString();
-    let match: RegExpExecArray | null;
-    const separator = /\r?\n\r?\n/;
-    while ((match = separator.exec(buf)) !== null) {
-      const idx = match.index;
+    let idx: number;
+    while ((idx = buf.indexOf("\n\n")) !== -1) {
       const block = buf.slice(0, idx);
-      buf = buf.slice(idx + match[0].length);
+      buf = buf.slice(idx + 2);
       if (!block.trim() || block.trimStart().startsWith(":")) continue;
 
       let event = "message";
       let data = "";
       let id: string | undefined;
-      for (const line of block.split(/\r?\n/)) {
+      for (const line of block.split("\n")) {
         if (line.startsWith("event:")) event = line.slice(6).trim();
         else if (line.startsWith("data:")) data = line.slice(5).trim();
         else if (line.startsWith("id:")) id = line.slice(3).trim();

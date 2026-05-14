@@ -41,8 +41,8 @@ export function createSseRoutes(overrides: Partial<SseRouteDeps> = {}) {
 
       function send(event: string, data: unknown, id?: string): boolean {
         if (!reply.raw.writableEnded && !reply.raw.destroyed) {
-          const idLine = id ? `id: ${id}\r\n` : "";
-          reply.raw.write(`${idLine}event: ${event}\r\ndata: ${JSON.stringify(data)}\r\n\r\n`);
+          const idLine = id ? `id: ${id}\n` : "";
+          reply.raw.write(`${idLine}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
           return true;
         }
         return false;
@@ -56,7 +56,7 @@ export function createSseRoutes(overrides: Partial<SseRouteDeps> = {}) {
 
       const heartbeat = setInterval(() => {
         if (!reply.raw.writableEnded && !reply.raw.destroyed) {
-          reply.raw.write(": heartbeat\r\n\r\n");
+          reply.raw.write(": heartbeat\n\n");
         } else {
           clearInterval(heartbeat);
         }
