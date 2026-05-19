@@ -130,6 +130,7 @@ function makeConversation(senderId: string, recipientId: string): ConversationRo
     participant_two: p2,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    initiator_user_id: null,
   };
 }
 
@@ -142,6 +143,7 @@ function makeMessage(senderId: string, convId: string): MessageRow {
     attachment_url: null,
     attachment_type: null,
     created_at: new Date().toISOString(),
+    bootstrap_json: null,
   };
 }
 

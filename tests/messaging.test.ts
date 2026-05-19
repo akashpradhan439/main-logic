@@ -223,6 +223,7 @@ function makeConversation(overrides: Partial<ConversationRow> = {}): Conversatio
     participant_two: scenario.userId < scenario.otherUserId ? scenario.otherUserId : scenario.userId,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    initiator_user_id: null,
     ...overrides,
   };
 }
@@ -243,6 +244,7 @@ function makeMessage(overrides: Partial<MessageRow> = {}): MessageRow {
     attachment_url: null,
     attachment_type: null,
     created_at: new Date().toISOString(),
+    bootstrap_json: null,
     ...overrides,
   };
 }

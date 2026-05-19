@@ -9,6 +9,17 @@ export interface ConversationRow {
   participant_two: string;
   created_at: string;
   updated_at: string;
+  initiator_user_id: string | null;
+}
+
+export interface BootstrapJson {
+  senderIdentityKey:    string;
+  senderEphemeralKey:   string;
+  pqCiphertext:         string;
+  signedPrekeyId:       number;
+  pqSignedPrekeyId:     number;
+  usedOTPPublicKey?:    string | undefined;
+  usedPQOTPPublicKey?:  string | undefined;
 }
 
 export interface MessageRow {
@@ -19,6 +30,7 @@ export interface MessageRow {
   attachment_url: string | null;
   attachment_type: string | null;
   created_at: string;
+  bootstrap_json: BootstrapJson | null;
 }
 
 /**
@@ -60,7 +72,7 @@ export async function findOrCreateConversation(
   // Try to find existing conversation first
   const { data: existing, error: findError } = await client
     .from("conversations")
-    .select("id, participant_one, participant_two, created_at, updated_at")
+    .select("id, participant_one, participant_two, created_at, updated_at, initiator_user_id")
     .eq("participant_one", participantOne)
     .eq("participant_two", participantTwo)
     .maybeSingle();
@@ -81,7 +93,7 @@ export async function findOrCreateConversation(
   const { data: created, error: createError } = await client
     .from("conversations")
     .insert({ participant_one: participantOne, participant_two: participantTwo })
-    .select("id, participant_one, participant_two, created_at, updated_at")
+    .select("id, participant_one, participant_two, created_at, updated_at, initiator_user_id")
     .single();
 
   if (createError) {
@@ -89,7 +101,7 @@ export async function findOrCreateConversation(
     if (createError.code === "23505") {
       const { data: raceResult, error: raceError } = await client
         .from("conversations")
-        .select("id, participant_one, participant_two, created_at, updated_at")
+        .select("id, participant_one, participant_two, created_at, updated_at, initiator_user_id")
         .eq("participant_one", participantOne)
         .eq("participant_two", participantTwo)
         .single();
@@ -130,6 +142,7 @@ export async function insertMessage(
   envelope: MessageEnvelope,
   attachmentUrl: string | null,
   attachmentType: string | null,
+  bootstrapJson: BootstrapJson | null,
   log: { info: (obj: object, msg?: string) => void; error: (obj: object, msg?: string) => void }
 ): Promise<{ message: MessageRow | null; error: Error | null }> {
   // Encode the structured envelope to Protobuf binary
@@ -144,8 +157,9 @@ export async function insertMessage(
       envelope: Buffer.from(binaryEnvelope).toString("base64"),
       attachment_url: attachmentUrl,
       attachment_type: attachmentType,
+      bootstrap_json: bootstrapJson,
     })
-    .select("id, conversation_id, sender_id, envelope, attachment_url, attachment_type, created_at")
+    .select("id, conversation_id, sender_id, envelope, attachment_url, attachment_type, created_at, bootstrap_json")
     .single();
 
   if (error) {
@@ -164,13 +178,18 @@ export async function insertMessage(
     attachment_url: data.attachment_url,
     attachment_type: data.attachment_type,
     created_at: data.created_at,
+    bootstrap_json: (data.bootstrap_json as BootstrapJson | null) ?? null,
   };
 
-  // Bump conversation updated_at
-  const { error: updateError } = await client
-    .from("conversations")
-    .update({ updated_at: new Date().toISOString() })
-    .eq("id", conversationId);
+  // Bump updated_at and set initiator_user_id on first message (non-fatal)
+  const now = new Date().toISOString();
+  const [{ error: updateError }] = await Promise.all([
+    client.from("conversations").update({ updated_at: now }).eq("id", conversationId),
+    client.from("conversations")
+      .update({ initiator_user_id: senderId })
+      .eq("id", conversationId)
+      .is("initiator_user_id", null),
+  ]);
 
   if (updateError) {
     log.error(
@@ -194,7 +213,7 @@ export async function getConversationMessages(
 ): Promise<{ messages: MessageRow[]; error: Error | null }> {
   let query = client
     .from("messages")
-    .select("id, conversation_id, sender_id, envelope, attachment_url, attachment_type, created_at")
+    .select("id, conversation_id, sender_id, envelope, attachment_url, attachment_type, created_at, bootstrap_json")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -212,6 +231,7 @@ export async function getConversationMessages(
   const messages: MessageRow[] = (data ?? []).map((m: any) => ({
     ...m,
     envelope: Buffer.from(m.envelope, "base64"),
+    bootstrap_json: (m.bootstrap_json as BootstrapJson | null) ?? null,
   }));
 
   return { messages: messages, error: null };
@@ -239,7 +259,7 @@ export async function* getMessagesSinceCursor(
   while (true) {
     const { data, error } = await client
       .from("messages")
-      .select("id, conversation_id, sender_id, envelope, attachment_url, attachment_type, created_at")
+      .select("id, conversation_id, sender_id, envelope, attachment_url, attachment_type, created_at, bootstrap_json")
       .in("conversation_id", conversationIds)
       .gt("created_at", cursor)
       .order("created_at", { ascending: true })
@@ -255,9 +275,11 @@ export async function* getMessagesSinceCursor(
       attachment_url: string | null;
       attachment_type: string | null;
       created_at: string;
+      bootstrap_json: BootstrapJson | null;
     }>).map((m) => ({
       ...m,
       envelope: Buffer.from(m.envelope, "base64"),
+      bootstrap_json: m.bootstrap_json ?? null,
     }));
 
     yield messages;
@@ -282,7 +304,7 @@ export async function verifyConversationParticipant(
 }> {
   const { data, error } = await client
     .from("conversations")
-    .select("id, participant_one, participant_two, created_at, updated_at")
+    .select("id, participant_one, participant_two, created_at, updated_at, initiator_user_id")
     .eq("id", conversationId)
     .single();
 

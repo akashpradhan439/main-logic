@@ -3,6 +3,8 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { publishNewMessage } from "../lib/rabbitmq.js";
 import type { MessageEnvelope } from "../shared/types.js";
+import { decodeEnvelope } from "../shared/types.js";
+import type { BootstrapJson } from "../lib/messaging.js";
 import {
   messagesSentTotal,
   messagesPublishFailuresTotal,
@@ -41,11 +43,13 @@ const SendMessageSchema = z.object({
     ciphertext: z.any(),
     bootstrap: z
       .object({
-        senderIdentityKey:  z.string().min(1),
-        senderEphemeralKey: z.string().min(1),
-        pqCiphertext:       z.string().min(1),
-        signedPrekeyId:     z.number().int().positive(),
-        pqSignedPrekeyId:   z.number().int().positive(),
+        senderIdentityKey:   z.string().min(1),
+        senderEphemeralKey:  z.string().min(1),
+        pqCiphertext:        z.string().min(1),
+        signedPrekeyId:      z.number().int().positive(),
+        pqSignedPrekeyId:    z.number().int().positive(),
+        usedOTPPublicKey:    z.string().min(1).optional(),
+        usedPQOTPPublicKey:  z.string().min(1).optional(),
       })
       .optional(),
   }),
@@ -286,6 +290,7 @@ export function createMessagingRoutes(
             id,
             participant_one,
             participant_two,
+            initiator_user_id,
             created_at,
             updated_at,
             p1:users!participant_one(first_name, last_name),
@@ -320,6 +325,7 @@ export function createMessagingRoutes(
             otherUserId,
             otherUserFirstName: otherUserProfile?.first_name || null,
             otherUserLastName: otherUserProfile?.last_name || null,
+            initiatorUserId: conv.initiator_user_id ?? null,
             createdAt: conv.created_at,
             updatedAt: conv.updated_at,
             lastMessage: lastMsg ? {
@@ -398,6 +404,8 @@ export function createMessagingRoutes(
           return reply.status(403).send({ success: false, error: req.t("messaging.errors.blocked_send") });
         }
 
+        const bootstrapJson: BootstrapJson | null = envelope.bootstrap ?? null;
+
         const { message, error: insertError } = await insertMessage(
           supabase,
           conversationId,
@@ -405,6 +413,7 @@ export function createMessagingRoutes(
           normalizedEnvelope,
           attachmentUrl,
           attachmentType,
+          bootstrapJson,
           log
         );
 
@@ -423,7 +432,7 @@ export function createMessagingRoutes(
           const sseConn = getConnection(recipientId);
           let sseSent = false;
           if (sseConn) {
-            const sseEvent = {
+            const sseEvent: Record<string, unknown> = {
               type: "new_message",
               conversationId,
               messageId: message.id,
@@ -433,6 +442,9 @@ export function createMessagingRoutes(
               attachmentType: message.attachment_type,
               createdAt: message.created_at,
             };
+            if (message.bootstrap_json) {
+              sseEvent.bootstrap = message.bootstrap_json;
+            }
             if (sseConn.isLive) {
               sseSent = sseConn.send("message", sseEvent, message.id);
               if (!sseSent) {
@@ -579,7 +591,36 @@ export function createMessagingRoutes(
         const lastMessage = messages.length === limit ? messages[messages.length - 1] : undefined;
         const nextCursor = lastMessage ? lastMessage.created_at : null;
 
-        return reply.status(200).send({ success: true, messages, nextCursor });
+        const structuredMessages = messages.map((msg) => {
+          let structuredEnvelope: Record<string, unknown>;
+          try {
+            const decoded = decodeEnvelope(msg.envelope);
+            structuredEnvelope = {
+              header: {
+                dhPublicKey: Buffer.from(decoded.header.dhPublicKey).toString("base64"),
+                n: decoded.header.n,
+                pn: decoded.header.pn,
+              },
+              ciphertext: Buffer.from(decoded.ciphertext).toString("base64"),
+            };
+          } catch {
+            structuredEnvelope = { ciphertext: Buffer.from(msg.envelope).toString("base64") };
+          }
+          if (msg.bootstrap_json) {
+            structuredEnvelope.bootstrap = msg.bootstrap_json;
+          }
+          return {
+            id: msg.id,
+            conversationId: msg.conversation_id,
+            senderId: msg.sender_id,
+            envelope: structuredEnvelope,
+            attachmentUrl: msg.attachment_url,
+            attachmentType: msg.attachment_type,
+            createdAt: msg.created_at,
+          };
+        });
+
+        return reply.status(200).send({ success: true, messages: structuredMessages, nextCursor });
       } catch (err) {
         log.error(
           { event: "messages_fetch_error", requestId, err },

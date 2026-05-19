@@ -75,7 +75,7 @@ export function createSseRoutes(overrides: Partial<SseRouteDeps> = {}) {
           for await (const batch of generator) {
             if (reply.raw.writableEnded || reply.raw.destroyed) break;
             for (const msg of batch) {
-              send("message", {
+              const replayEvent: Record<string, unknown> = {
                 type: "new_message",
                 conversationId: msg.conversation_id,
                 messageId: msg.id,
@@ -84,7 +84,11 @@ export function createSseRoutes(overrides: Partial<SseRouteDeps> = {}) {
                 attachmentUrl: msg.attachment_url,
                 attachmentType: msg.attachment_type,
                 createdAt: msg.created_at,
-              }, msg.id);
+              };
+              if (msg.bootstrap_json) {
+                replayEvent.bootstrap = msg.bootstrap_json;
+              }
+              send("message", replayEvent, msg.id);
             }
             await new Promise<void>((resolve) => setImmediate(resolve));
           }
