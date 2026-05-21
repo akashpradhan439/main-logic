@@ -21,7 +21,7 @@
   "dependencies": {
     "@fastify/cors": "^11.2.0",
     "@fastify/helmet": "^13.0.2",
-"@noble/ciphers": "^2.1.1",
+    "@noble/ciphers": "^2.1.1",
     "@noble/hashes": "^2.0.1",
     "@noble/post-quantum": "^0.6.0",
     "@supabase/supabase-js": "^2.98.0",
@@ -30,6 +30,7 @@
     "docker": "^1.0.0",
     "dotenv": "^17.3.1",
     "fastify": "^5.7.4",
+    "groq-sdk": "^1.2.0",
     "h3-js": "^4.4.0",
     "i18next": "^26.0.1",
     "jsonwebtoken": "^9.0.3",

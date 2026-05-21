@@ -43,5 +43,5 @@
 
     "moduleResolution": "nodenext",
   },
-  "exclude": ["node_modules", "dist", "supabase/functions"]
+  "exclude": ["node_modules", "dist", "supabase/functions", "scripts"]
 }

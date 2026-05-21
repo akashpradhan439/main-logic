@@ -17,6 +17,9 @@ export const config = {
   apnsProduction: process.env.NODE_ENV === "production",
   redisUrl: process.env.REDIS_URL || "redis://localhost:6379",
   qrEncryptionKey: process.env.QR_ENCRYPTION_KEY || "",
+  groqApiKey: process.env.GROQ_API_KEY || "",
+  n8nMeetupWebhookUrl: process.env.N8N_MEETUP_WEBHOOK_URL || "",
+  n8nWebhookSecret: process.env.N8N_WEBHOOK_SECRET || "",
   skipRabbitMQ: process.env.SKIP_RABBITMQ === "true",
   skipRedis: process.env.SKIP_REDIS === "true",
 };

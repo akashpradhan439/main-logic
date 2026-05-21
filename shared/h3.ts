@@ -1,4 +1,4 @@
-import { gridDistance, getResolution, gridDisk } from "h3-js";
+import { gridDistance, getResolution, gridDisk, cellToLatLng } from "h3-js";
 
 /**
  * Returns the H3 grid distance (number of hex steps) between two cells.
@@ -33,5 +33,17 @@ export function getHexDisk(hex: string, radius: number): string[] {
     return gridDisk(hex, radius);
   } catch {
     return [hex];
+  }
+}
+
+/**
+ * Converts an H3 cell to its centroid lat/lng. Returns null if the cell is invalid.
+ */
+export function cellToLatLngSafe(hex: string): { lat: number; lng: number } | null {
+  try {
+    const [lat, lng] = cellToLatLng(hex);
+    return { lat, lng };
+  } catch {
+    return null;
   }
 }
