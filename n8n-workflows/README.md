@@ -33,13 +33,16 @@ directly — no n8n-specific Groq integration is required, and the workflow work
 
 2. **Set n8n environment variables** (Docker `-e` or `n8n` config):
    ```
-   N8N_WEBHOOK_SECRET     — shared secret with the Fastify server (must match config.n8nWebhookSecret)
-   APP_BASE_URL           — internal URL to reach your Fastify container, e.g. http://app:3000
-   OLA_MAPS_API_KEY       — your Ola Maps API key
-   GROQ_API_KEY           — your Groq API key (from https://console.groq.com/keys)
+   N8N_WEBHOOK_SECRET            — shared secret with the Fastify server (must match config.n8nWebhookSecret)
+   APP_BASE_URL                  — internal URL to reach your Fastify container, e.g. http://app:3000
+   OLA_MAPS_API_KEY              — your Ola Maps API key
+   GROQ_API_KEY                  — your Groq API key (from https://console.groq.com/keys)
+   N8N_BLOCK_ENV_ACCESS_IN_NODE  — must be `false` (default is `true` in recent n8n versions)
    ```
    In a Docker Compose setup, `APP_BASE_URL` is typically the service name of your Fastify app
    container, e.g. `http://api:3000` if your service is named `api`.
+
+   > **Why `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` is required:** the workflow's `Verify Secret` IF node and both Groq/Ola HTTP nodes resolve credentials via `{{ $env.* }}` expressions. Recent n8n versions block expression access to environment variables by default, which causes the first execution to fail with `ExpressionError: access to env vars denied`.
 
 3. **No additional credentials needed** — both Groq HTTP calls authenticate via `Authorization: Bearer {{ $env.GROQ_API_KEY }}` header from the env var above. Just make sure `GROQ_API_KEY` is set in the n8n container's env.
 

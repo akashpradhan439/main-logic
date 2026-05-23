@@ -1,4 +1,6 @@
 {
+  "id": "meetup-spots-v1",
+  "active": true,
   "name": "Meet-up Spots",
   "nodes": [
     {

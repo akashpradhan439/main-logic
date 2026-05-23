@@ -9,6 +9,7 @@ import sseRoutes from "./sse.js";
 import profileRoutes from "./profile.js";
 import aiRoutes from "./ai.js";
 import meetupRoutes from "./meetup.js";
+import meetupSuggestionsRoutes from "./meetup-suggestions.js";
 
 export default async function registerRoutes(app: FastifyInstance) {
   app.register(healthRoutes);
@@ -21,4 +22,5 @@ export default async function registerRoutes(app: FastifyInstance) {
   app.register(profileRoutes);
   app.register(aiRoutes);
   app.register(meetupRoutes);
+  app.register(meetupSuggestionsRoutes);
 }
