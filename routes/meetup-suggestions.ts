@@ -32,6 +32,8 @@ type SuggestionsContext = {
   firstName: string;
   bio: string | null;
   interests: string[];
+  language: string;
+  languageLabel: string;
   lat: number;
   lng: number;
   h3Cell: string;
@@ -39,6 +41,20 @@ type SuggestionsContext = {
   dayOfWeek: string;
   date: string;
   connections: ConnectionContext[];
+};
+
+const LANGUAGE_LABELS: Record<string, string> = {
+  en: "English",
+  ar: "Arabic",
+  bn: "Bangla (Bengali)",
+  es: "Spanish",
+  fr: "French",
+  hi: "Hindi",
+  ja: "Japanese",
+  pt: "Portuguese",
+  ru: "Russian",
+  "zh-Hans": "Simplified Chinese",
+  "zh-Hant": "Traditional Chinese",
 };
 
 function bucketTimeOfDay(d: Date): SuggestionsContext["timeOfDay"] {
@@ -97,7 +113,7 @@ export function createMeetupSuggestionsRoutes(
 
         const { data: me, error: meErr } = await supabase
           .from("users")
-          .select("first_name, bio, interests, h3_cell")
+          .select("first_name, bio, interests, h3_cell, language_preference")
           .eq("id", userId)
           .single();
 
@@ -204,11 +220,15 @@ export function createMeetupSuggestionsRoutes(
         }
 
         const now = new Date();
+        const languageCode = ((me.language_preference as string | null) ?? "en");
+        const languageLabel = LANGUAGE_LABELS[languageCode] ?? "English";
         const context: SuggestionsContext = {
           userId,
           firstName: me.first_name as string,
           bio: (me.bio as string | null) ?? null,
           interests: (me.interests as string[] | null) ?? [],
+          language: languageCode,
+          languageLabel,
           lat: coords.lat,
           lng: coords.lng,
           h3Cell,

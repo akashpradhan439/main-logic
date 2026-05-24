@@ -72,13 +72,19 @@ export function createAiRoutes(overrides: Partial<AiRouteDeps> = {}) {
           throw err;
         }
 
-        // 1. Cache check
-        const cacheKey = `ai:suggestions:${userId}`;
+        // 1. Cache check (keyed by language so language switches don't return stale prose)
+        const { data: cachedUserLang } = await supabase
+          .from("users")
+          .select("language_preference")
+          .eq("id", userId)
+          .single();
+        const userLang = (cachedUserLang?.language_preference as string | null) ?? "en";
+        const cacheKey = `ai:suggestions:${userId}:${userLang}`;
         const cached = await redisGet(cacheKey);
         if (cached) {
           try {
             const parsed = JSON.parse(cached);
-            log.info({ event: "ai_suggestions_cache_hit", userId }, "Returned cached suggestions");
+            log.info({ event: "ai_suggestions_cache_hit", userId, lang: userLang }, "Returned cached suggestions");
             return reply.status(200).send({ success: true, suggestions: parsed, cached: true });
           } catch {
             // fall through on parse error
@@ -88,7 +94,7 @@ export function createAiRoutes(overrides: Partial<AiRouteDeps> = {}) {
         // 2. Fetch current user profile
         const { data: me, error: meErr } = await supabase
           .from("users")
-          .select("h3_cell, h3_neighbors, bio, interests")
+          .select("h3_cell, h3_neighbors, bio, interests, language_preference")
           .eq("id", userId)
           .single();
 
@@ -102,6 +108,7 @@ export function createAiRoutes(overrides: Partial<AiRouteDeps> = {}) {
         const myInterests = (me.interests as string[] | null) ?? [];
         const myNeighbors = (me.h3_neighbors as string[] | null) ?? [];
         const myCell = (me.h3_cell as string | null) ?? null;
+        const myLanguage = (me.language_preference as string | null) ?? "en";
 
         // 3. Fetch exclusion set (all connections of any status involving current user)
         const { data: myConnRows, error: connErr } = await supabase
@@ -261,7 +268,8 @@ export function createAiRoutes(overrides: Partial<AiRouteDeps> = {}) {
         // 7. Call Claude for ranking + reasons
         const ranked = await suggestConnections(
           { bio: (me.bio as string | null) ?? null, interests: myInterests },
-          topCandidates.map((e) => e.payload)
+          topCandidates.map((e) => e.payload),
+          myLanguage
         );
 
         // 8. Merge Claude reasons with candidate profile data, preserving Claude's order
@@ -331,7 +339,14 @@ export function createAiRoutes(overrides: Partial<AiRouteDeps> = {}) {
             .send({ success: false, error: req.t("common.errors.invalid_parameter") });
         }
 
-        const interests = await suggestInterests(bio.trim());
+        const { data: meLang } = await supabase
+          .from("users")
+          .select("language_preference")
+          .eq("id", userId)
+          .single();
+        const userLanguage = (meLang?.language_preference as string | null) ?? "en";
+
+        const interests = await suggestInterests(bio.trim(), userLanguage);
 
         log.info({ event: "ai_interests_generated", userId, interestCount: interests.length }, "AI interests generated");
 

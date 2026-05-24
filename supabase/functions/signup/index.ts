@@ -25,7 +25,12 @@ interface SignupRequest {
   first_name: string;
   last_name: string;
   code: String;
+  language_preference?: string;
 }
+
+const SUPPORTED_LANGUAGES = [
+  "en", "ar", "bn", "es", "fr", "hi", "ja", "pt", "ru", "zh-Hans", "zh-Hant",
+] as const;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -37,11 +42,22 @@ serve(async (req) => {
       token: Deno.env.get("REDIS_TOKEN")!,
     });
 
-    const { country_code, phone_number, password, dob, first_name, last_name, code }: SignupRequest = await req.json();
+    const { country_code, phone_number, password, dob, first_name, last_name, code, language_preference }: SignupRequest = await req.json();
 
     // 1. Validation check
     if (!country_code || !phone_number || !password || !dob || !first_name || !last_name || !code) {
        return new Response(JSON.stringify({ error: "Missing fields" }), { status: 400, headers: corsHeaders });
+    }
+
+    let languagePreference = "en";
+    if (language_preference !== undefined && language_preference !== null) {
+      if (typeof language_preference !== "string" || !SUPPORTED_LANGUAGES.includes(language_preference as typeof SUPPORTED_LANGUAGES[number])) {
+        return new Response(
+          JSON.stringify({ error: "Invalid language_preference", supported: SUPPORTED_LANGUAGES }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      languagePreference = language_preference;
     }
 
     const phone = `${country_code}${phone_number}`;
@@ -111,8 +127,8 @@ serve(async (req) => {
     // 5. Insert User
     const { data: newUser, error: insertError } = await supabase
       .from("users")
-      .insert({ country_code, phone_number, password_hash: passwordHash, dob, first_name, last_name })
-      .select("id, country_code, phone_number")
+      .insert({ country_code, phone_number, password_hash: passwordHash, dob, first_name, last_name, language_preference: languagePreference })
+      .select("id, country_code, phone_number, language_preference")
       .single();
 
     if (insertError) {
@@ -144,7 +160,11 @@ serve(async (req) => {
         access_token: accessToken,
         refresh_token: refreshToken,
         expires_in: ACCESS_TOKEN_EXPIRY,
-        user: { id: newUser.id, phone: `${newUser.country_code}${newUser.phone_number}` }
+        user: {
+          id: newUser.id,
+          phone: `${newUser.country_code}${newUser.phone_number}`,
+          language_preference: newUser.language_preference,
+        }
       }),
       { status: 201, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

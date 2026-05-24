@@ -51,7 +51,7 @@ serve(async (req) => {
     // 1. Fetch user
     const { data: user, error: userError } = await supabase
       .from("users")
-      .select("id, password_hash, country_code, phone_number")
+      .select("id, password_hash, country_code, phone_number, language_preference")
       .eq("country_code", country_code)
       .eq("phone_number", phone_number)
       .maybeSingle();
@@ -186,6 +186,7 @@ serve(async (req) => {
         user: {
           id: user.id,
           phone: `${user.country_code}${user.phone_number}`,
+          language_preference: user.language_preference,
         },
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }

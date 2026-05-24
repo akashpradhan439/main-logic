@@ -3,6 +3,20 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { verifyAccessToken, AuthError } from "../shared/auth.js";
 
+export const SUPPORTED_LANGUAGES = [
+  "en",
+  "ar",
+  "bn",
+  "es",
+  "fr",
+  "hi",
+  "ja",
+  "pt",
+  "ru",
+  "zh-Hans",
+  "zh-Hant",
+] as const;
+
 const UpdateProfileSchema = z
   .object({
     bio: z.string().max(300).nullable().optional(),
@@ -10,6 +24,12 @@ const UpdateProfileSchema = z
       .array(z.string().min(1).max(50))
       .max(15)
       .optional(),
+  })
+  .strict();
+
+const UpdateLanguageSchema = z
+  .object({
+    language_preference: z.enum(SUPPORTED_LANGUAGES),
   })
   .strict();
 
@@ -136,6 +156,67 @@ export function createProfileRoutes(overrides: Partial<ProfileRouteDeps> = {}) {
         });
       } catch (err) {
         log.error({ event: "profile_patch_error", err }, "Unexpected error in PATCH /profile");
+        return reply
+          .status(500)
+          .send({ success: false, error: req.t("common.errors.unable_to_process") });
+      }
+    });
+
+    app.patch("/profile/language", async (req, reply) => {
+      const log = req.log;
+      try {
+        let userId: string;
+        try {
+          const user = verifyAccessToken(req.headers.authorization);
+          userId = user.sub;
+        } catch (err) {
+          if (err instanceof AuthError) {
+            return reply
+              .status(err.status)
+              .send({ success: false, error: req.t("common.errors.auth_required") });
+          }
+          throw err;
+        }
+
+        const parsed = UpdateLanguageSchema.safeParse(req.body);
+        if (!parsed.success) {
+          return reply.status(400).send({
+            success: false,
+            error: req.t("common.errors.invalid_parameter"),
+            supported: SUPPORTED_LANGUAGES,
+          });
+        }
+
+        const { data, error } = await supabase
+          .from("users")
+          .update({ language_preference: parsed.data.language_preference })
+          .eq("id", userId)
+          .select("language_preference")
+          .single();
+
+        if (error) {
+          log.error(
+            { event: "language_update_failure", userId, error },
+            "Failed to update language preference"
+          );
+          return reply
+            .status(500)
+            .send({ success: false, error: req.t("common.errors.unable_to_process") });
+        }
+
+        log.info(
+          { event: "language_updated", userId, language: data.language_preference },
+          "Language preference updated"
+        );
+        return reply.status(200).send({
+          success: true,
+          languagePreference: data.language_preference,
+        });
+      } catch (err) {
+        log.error(
+          { event: "language_patch_error", err },
+          "Unexpected error in PATCH /profile/language"
+        );
         return reply
           .status(500)
           .send({ success: false, error: req.t("common.errors.unable_to_process") });
