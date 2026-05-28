@@ -2,6 +2,82 @@
 
 This directory contains n8n workflow JSON files that orchestrate the AI features.
 
+## events-scraper.json
+
+Pipeline behind the AI assistant's `search_events` tool. The Fastify server (`lib/eventsScraper.ts`) calls this workflow's webhook; the workflow does the actual Google Events scraping with a headless Playwright browser and uses Groq to extract structured events from the rendered HTML.
+
+### Pipeline
+
+```
+Webhook (POST /webhook/events-scraper, header X-N8N-Secret)
+  → Verify Secret (IF node)
+       ├─ pass → Validate Input (Code: trim + length checks on query/location)
+       │           → Playwright Scraper (Execute Command → python3 scripts/scrape.py)
+       │                   ↳ SQLite cache (4h TTL) → returns cached events OR raw HTML
+       │           → Parse Scraper Output (Code: route cache vs live)
+       │           → Cache Hit? (IF node)
+       │                ├─ hit  → Webhook Response (success, fromCache=true)
+       │                └─ miss → Groq: Parse Events (HTTP → llama-3.3-70b-versatile, JSON mode)
+       │                        → Validate + Clean Events (Code: schema check, cap to 20)
+       │                        → Webhook Response (success, fromCache=false)
+       └─ fail → Respond Unauthorized (401)
+```
+
+### Setup
+
+The scraping runs in a dedicated `scraper` sidecar container (Python + Playwright + Chromium) that exposes `POST /scrape` on port `8080`. The n8n workflow's "Playwright Scraper" node is an HTTP Request node that calls `${SCRAPER_SERVICE_URL}/scrape`. This keeps the n8n image lean and means the Linux-only browser dependencies live in one place.
+
+**With docker-compose.prod.yml (recommended):**
+The stack already wires this up — `docker compose -f docker-compose.prod.yml up -d --build` brings up:
+- `mainlogic-scraper` → built from `scraper-service/Dockerfile`, mounts `scraper_cache` volume at `/data`
+- `mainlogic-n8n` → gets `SCRAPER_SERVICE_URL=http://scraper:8080` and auto-imports + publishes the events-scraper workflow on start
+
+**Required environment variables (in `.env` consumed by docker-compose):**
+```
+N8N_WEBHOOK_SECRET   — shared secret with Fastify (must match config.n8nWebhookSecret)
+GROQ_API_KEY         — your Groq API key (used by the Groq parser node)
+```
+
+**Manual / non-Docker setup:**
+1. Build & run the scraper service: `cd scraper-service && docker build -t mainlogic-scraper . && docker run -p 8080:8080 mainlogic-scraper`
+2. Set `SCRAPER_SERVICE_URL=http://localhost:8080` (and `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`, `GROQ_API_KEY`, `N8N_WEBHOOK_SECRET`) on your n8n process.
+3. Import `events-scraper.json` via n8n UI and activate it.
+
+In every case, point the Fastify server at the n8n webhook URL:
+```
+N8N_EVENTS_SCRAPER_WEBHOOK_URL=http://<n8n-host>:5678/webhook/events-scraper
+```
+
+### Testing the workflow manually
+
+```bash
+curl -X POST http://localhost:5678/webhook/events-scraper \
+  -H "Content-Type: application/json" \
+  -H "X-N8N-Secret: $N8N_WEBHOOK_SECRET" \
+  -d '{"query":"live music concerts","location":"New Delhi"}'
+```
+
+Expected response:
+```json
+{
+  "success": true,
+  "count": 6,
+  "fromCache": false,
+  "events": [
+    {
+      "title": "Indie Night ft. Local Bands",
+      "date": "Sat, Jun 7",
+      "time": "8:00 PM",
+      "venue": "Antisocial",
+      "address": "Hauz Khas Village, New Delhi",
+      "url": "https://insider.in/...",
+      "source": "Insider",
+      "price": "From ₹499"
+    }
+  ]
+}
+```
+
 ## meetup-spots.json
 
 Pipeline behind `GET /ai/meetup/spots`. The Fastify server calls this workflow's

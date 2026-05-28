@@ -29,6 +29,7 @@ services:
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
       - N8N_MEETUP_WEBHOOK_URL=http://n8n:5678/webhook/meetup-spots
       - N8N_MEETUP_SUGGESTIONS_WEBHOOK_URL=http://n8n:5678/webhook/meetup-suggestions
+      - N8N_EVENTS_SCRAPER_WEBHOOK_URL=http://n8n:5678/webhook/events-scraper
     command: ["npm", "start"]
 
   worker-location:
@@ -79,12 +80,22 @@ services:
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
     command: ["npm", "run", "worker:messaging:prod"]
 
+  scraper:
+    build: ./n8n-workflows/scraper-service
+    image: mainlogic-scraper:latest
+    container_name: mainlogic-scraper
+    restart: always
+    volumes:
+      - scraper_cache:/data
+
   n8n:
     image: docker.n8n.io/n8nio/n8n
     container_name: mainlogic-n8n
     restart: always
     depends_on:
       api:
+        condition: service_started
+      scraper:
         condition: service_started
     ports:
       - "5678:5678"
@@ -93,12 +104,13 @@ services:
     environment:
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
       - APP_BASE_URL=http://api:3000
+      - SCRAPER_SERVICE_URL=http://scraper:8080
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n-workflows:/home/node/workflows:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
-      - "n8n import:workflow --input=/home/node/workflows/meetup-spots.json && n8n publish:workflow --id=meetup-spots-v1 && n8n import:workflow --input=/home/node/workflows/meetup-suggestions.json && n8n publish:workflow --id=meetup-suggestions-v1 && n8n start"
+      - "n8n import:workflow --input=/home/node/workflows/meetup-spots.json && n8n publish:workflow --id=meetup-spots-v1 && n8n import:workflow --input=/home/node/workflows/meetup-suggestions.json && n8n publish:workflow --id=meetup-suggestions-v1 && n8n import:workflow --input=/home/node/workflows/events-scraper.json && n8n publish:workflow --id=events-scraper-v1 && n8n start"
 
   nginx:
     image: nginx:alpine
@@ -114,3 +126,4 @@ services:
 volumes:
   rabbitmq_data:
   n8n_data:
+  scraper_cache:
