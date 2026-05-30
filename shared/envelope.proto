@@ -9,11 +9,15 @@ message MessageHeader {
 }
 
 message BootstrapData {
-  bytes  sender_identity_key  = 1;
-  bytes  sender_ephemeral_key = 2;
-  bytes  pq_ciphertext        = 3;
-  uint32 signed_prekey_id     = 4;
-  uint32 pq_signed_prekey_id  = 5;
+  bytes  sender_identity_key   = 1;
+  bytes  sender_ephemeral_key  = 2;
+  bytes  pq_ciphertext         = 3;
+  uint32 signed_prekey_id      = 4;
+  uint32 pq_signed_prekey_id   = 5;
+  // H1: identify exactly which one-time prekeys the initiator consumed so the
+  // responder can select the matching private keys. 0 means "no OPK was used".
+  uint32 one_time_prekey_id    = 6;
+  uint32 pq_one_time_prekey_id = 7;
 }
 
 message MessageEnvelope {

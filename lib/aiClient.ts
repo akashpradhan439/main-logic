@@ -1,3 +1,4 @@
+import type OpenAI from "openai";
 import type {
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
@@ -318,7 +319,7 @@ function buildAssistantSystemPrompt(ctx: AssistantUserContext): string {
     `- Call search_places when the user asks about a category of places to visit, eat, drink, or hang out.`,
     `- Call search_events when the user asks about events, concerts, festivals, meetups, or things happening at a date/time.`,
     `- Call get_place_details when the user asks for more information about a specific place that was already returned by search_places.`,
-    `- You may call multiple DIFFERENT tools in one turn if a question needs both places and events.`,
+    `- When a tool is offered, call it for any place/event question instead of answering from memory, and never invent place names, addresses, or events.`,
     `- Tool arguments MUST exactly match the declared schema. Do NOT add extra fields like latitude, longitude, location — the server already knows the user's location.`,
     `- search_places.query should be a short phrase (1-3 words) like 'coffee shop', 'rooftop bar', 'park', 'gym'. Do not include location words — the server already knows the user's coordinates.`,
     `- If the user is just chatting or asking general advice, reply directly without calling any tool.`,
@@ -524,6 +525,58 @@ async function noToolsCompletion(messages: ChatCompletionMessageParam[]): Promis
   return c.choices[0]?.message?.content ?? "";
 }
 
+type AssistantToolName = "search_places" | "search_events" | "get_place_details";
+
+const ASSISTANT_TOOLS_BY_NAME: Record<AssistantToolName, ChatCompletionTool> = {
+  search_places: SEARCH_PLACES_TOOL,
+  search_events: SEARCH_EVENTS_TOOL,
+  get_place_details: GET_PLACE_DETAILS_TOOL,
+};
+
+// This Foundry deployment rejects any request that offers more than one tool
+// (400 UnsupportedToolUse: "does not support more than one tool call"). So we
+// classify the user's intent first and offer at most ONE tool on the main call.
+// A no-tools JSON completion never trips that limit.
+async function selectAssistantTool(
+  client: OpenAI,
+  deployment: string,
+  userMessage: string,
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): Promise<AssistantToolName | null> {
+  const recent = history
+    .slice(-4)
+    .map((h) => `${h.role}: ${h.content}`)
+    .join("\n");
+  const system =
+    `Classify the user's latest message to pick which single tool (if any) should run.\n` +
+    `Return ONLY JSON: {"tool":"search_places"|"search_events"|"get_place_details"|"none"}.\n` +
+    `- search_places: they want somewhere to go, eat, drink, or visit (cafes, restaurants, parks, bars, gyms, attractions).\n` +
+    `- search_events: they ask about events, concerts, festivals, gigs, or what's happening on a date.\n` +
+    `- get_place_details: they ask for more detail about one specific place already mentioned.\n` +
+    `- none: greetings, small talk, general advice, or anything not needing live place/event data.`;
+  const user = (recent ? `Recent conversation:\n${recent}\n\n` : "") + `Latest message: ${userMessage}`;
+  try {
+    const c = await client.chat.completions.create({
+      model: deployment,
+      max_tokens: 30,
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+    });
+    const parsed = JSON.parse(c.choices[0]?.message?.content ?? "{}") as { tool?: unknown };
+    const t = parsed.tool;
+    if (t === "search_places" || t === "search_events" || t === "get_place_details") {
+      return t;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function chatWithAssistant(
   history: Array<{ role: "user" | "assistant"; content: string }>,
   userMessage: string,
@@ -576,13 +629,21 @@ export async function chatWithAssistant(
     { role: "user", content: userMessage },
   ];
 
+  // Pick at most one tool up front — the deployment 400s if we offer more than
+  // one. If none is relevant (small talk, general advice), answer directly.
+  const selectedTool = await selectAssistantTool(client, deployment, userMessage, history);
+  if (!selectedTool) {
+    const reply = await noToolsCompletion(pass1Messages);
+    return { reply, cards: [] };
+  }
+
   let pass1;
   try {
     pass1 = await client.chat.completions.create({
       model: deployment,
       max_tokens: 1024,
       temperature: 0.6,
-      tools: [SEARCH_PLACES_TOOL, SEARCH_EVENTS_TOOL, GET_PLACE_DETAILS_TOOL],
+      tools: [ASSISTANT_TOOLS_BY_NAME[selectedTool]],
       tool_choice: "auto",
       messages: pass1Messages,
     });

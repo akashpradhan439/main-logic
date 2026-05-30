@@ -18,6 +18,8 @@ export interface BootstrapJson {
   pqCiphertext:         string;
   signedPrekeyId:       number;
   pqSignedPrekeyId:     number;
+  oneTimePrekeyId?:     number | undefined;
+  pqOneTimePrekeyId?:   number | undefined;
   usedOTPPublicKey?:    string | undefined;
   usedPQOTPPublicKey?:  string | undefined;
 }
@@ -31,6 +33,9 @@ export interface MessageRow {
   attachment_type: string | null;
   created_at: string;
   bootstrap_json: BootstrapJson | null;
+  // Canonical conversation initiator. Populated by the SSE catch-up generator so
+  // replayed events carry the same initiatorUserId the live send path emits.
+  initiator_user_id?: string | null;
 }
 
 /**
@@ -144,7 +149,7 @@ export async function insertMessage(
   attachmentType: string | null,
   bootstrapJson: BootstrapJson | null,
   log: { info: (obj: object, msg?: string) => void; error: (obj: object, msg?: string) => void }
-): Promise<{ message: MessageRow | null; error: Error | null }> {
+): Promise<{ message: MessageRow | null; initiatorUserId?: string | null; error: Error | null }> {
   // Encode the structured envelope to Protobuf binary
   const binaryEnvelope = encodeEnvelope(envelope);
 
@@ -181,14 +186,18 @@ export async function insertMessage(
     bootstrap_json: (data.bootstrap_json as BootstrapJson | null) ?? null,
   };
 
-  // Bump updated_at and set initiator_user_id on first message (non-fatal)
+  // Set initiator_user_id on the FIRST message (set-once via the is-null guard —
+  // concurrent first-messages serialize on the row lock so the earliest INSERT
+  // wins). This is the canonical tie-breaker that lets both clients agree on who
+  // is the PQXDH initiator vs responder, preventing the simultaneous-initiation
+  // deadlock where both sides flip to responder onto opposite master secrets.
   const now = new Date().toISOString();
-  const [{ error: updateError }] = await Promise.all([
-    client.from("conversations").update({ updated_at: now }).eq("id", conversationId),
+  const [, { error: updateError }] = await Promise.all([
     client.from("conversations")
       .update({ initiator_user_id: senderId })
       .eq("id", conversationId)
       .is("initiator_user_id", null),
+    client.from("conversations").update({ updated_at: now }).eq("id", conversationId),
   ]);
 
   if (updateError) {
@@ -199,7 +208,16 @@ export async function insertMessage(
     // Non-fatal: the message was still inserted successfully
   }
 
-  return { message, error: null };
+  // Read back the canonical initiator (whoever actually won the set-once race) so
+  // callers can hand the same value to both participants.
+  const { data: convRow } = await client
+    .from("conversations")
+    .select("initiator_user_id")
+    .eq("id", conversationId)
+    .maybeSingle();
+  const initiatorUserId = (convRow as { initiator_user_id: string | null } | null)?.initiator_user_id ?? senderId;
+
+  return { message, initiatorUserId, error: null };
 }
 
 /**
@@ -249,21 +267,34 @@ export async function* getMessagesSinceCursor(
 ): AsyncGenerator<MessageRow[], void, unknown> {
   const { data: convData } = await client
     .from("conversations")
-    .select("id")
+    .select("id, initiator_user_id")
     .or(`participant_one.eq.${userId},participant_two.eq.${userId}`);
 
   const conversationIds = (convData ?? []).map((c: { id: string }) => c.id);
   if (conversationIds.length === 0) return;
 
-  let offset = 0;
+  // Canonical initiator per conversation, so catch-up/replay events carry
+  // initiatorUserId exactly like the live send path. Without it, a peer's n=0
+  // bootstrap replayed on reconnect leaves both clients unable to agree on the
+  // initiator role → simultaneous-initiation deadlock (both become responders).
+  const initiatorByConv = new Map<string, string | null>();
+  for (const c of (convData ?? []) as Array<{ id: string; initiator_user_id: string | null }>) {
+    initiatorByConv.set(c.id, c.initiator_user_id ?? null);
+  }
+
+  // Keyset pagination: advance the cursor by the last row's created_at each batch
+  // instead of using a fixed cursor + offset. Offset pagination over a set that
+  // can grow mid-catch-up (new messages keep arriving) silently skips or
+  // duplicates rows; keyset is stable under concurrent inserts.
+  let lastCursor = cursor;
   while (true) {
     const { data, error } = await client
       .from("messages")
       .select("id, conversation_id, sender_id, envelope, attachment_url, attachment_type, created_at, bootstrap_json")
       .in("conversation_id", conversationIds)
-      .gt("created_at", cursor)
+      .gt("created_at", lastCursor)
       .order("created_at", { ascending: true })
-      .range(offset, offset + batchSize - 1);
+      .limit(batchSize);
 
     if (error || !data || data.length === 0) break;
 
@@ -280,13 +311,50 @@ export async function* getMessagesSinceCursor(
       ...m,
       envelope: Buffer.from(m.envelope, "base64"),
       bootstrap_json: m.bootstrap_json ?? null,
+      initiator_user_id: initiatorByConv.get(m.conversation_id) ?? null,
     }));
 
     yield messages;
 
-    if (data.length < batchSize) break;
-    offset += batchSize;
+    const nextCursor = messages[messages.length - 1]!.created_at;
+    // Guard against a non-advancing cursor (would loop forever if a full batch
+    // shared one timestamp — not expected with microsecond insert timestamps).
+    if (data.length < batchSize || nextCursor === lastCursor) break;
+    lastCursor = nextCursor;
   }
+}
+
+/**
+ * Returns the conversation's bootstrap (PQXDH handshake material), independent of
+ * message-history pagination (Bug 2). The bootstrap rides only on the initiator's
+ * first message; a responder that never established a session must be able to fetch
+ * it even after that message scrolls out of the recent-history window. Returns the
+ * EARLIEST message that carries a bootstrap_json.
+ */
+export async function getConversationBootstrap(
+  client: SupabaseClient,
+  conversationId: string
+): Promise<{ bootstrap: BootstrapJson | null; senderId: string | null; error: Error | null }> {
+  const { data, error } = await client
+    .from("messages")
+    .select("sender_id, bootstrap_json, created_at")
+    .eq("conversation_id", conversationId)
+    .not("bootstrap_json", "is", null)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    return { bootstrap: null, senderId: null, error: error as unknown as Error };
+  }
+  if (!data) {
+    return { bootstrap: null, senderId: null, error: null };
+  }
+  return {
+    bootstrap: (data.bootstrap_json as BootstrapJson | null) ?? null,
+    senderId: (data.sender_id as string | null) ?? null,
+    error: null,
+  };
 }
 
 /**

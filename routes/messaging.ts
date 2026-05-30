@@ -14,12 +14,14 @@ import {
   findOrCreateConversation,
   insertMessage,
   getConversationMessages,
+  getConversationBootstrap,
   verifyConversationParticipant,
   getOtherParticipant,
   type ConversationRow,
   type MessageRow,
 } from "../lib/messaging.js";
 import { findConnectionBetweenUsers, isPairBlocked } from "../lib/connections.js";
+import { usersWithUsableBundles } from "../lib/keys.js";
 import { getConnection } from "../lib/sseManager.js";
 
 // ─── Zod Schemas ──────────────────────────────────────────────────────────────
@@ -48,6 +50,8 @@ const SendMessageSchema = z.object({
         pqCiphertext:        z.string().min(1),
         signedPrekeyId:      z.number().int().positive(),
         pqSignedPrekeyId:    z.number().int().positive(),
+        oneTimePrekeyId:     z.number().int().nonnegative().optional(),
+        pqOneTimePrekeyId:   z.number().int().nonnegative().optional(),
         usedOTPPublicKey:    z.string().min(1).optional(),
         usedPQOTPPublicKey:  z.string().min(1).optional(),
       })
@@ -98,6 +102,8 @@ function normalizeEnvelopeForStorage(envelope: {
     pqCiphertext:       string;
     signedPrekeyId:     number;
     pqSignedPrekeyId:   number;
+    oneTimePrekeyId?:   number | undefined;
+    pqOneTimePrekeyId?: number | undefined;
   } | undefined;
 }): MessageEnvelope | null {
   const dhPublicKey = toUint8Array(envelope.header.dhPublicKey);
@@ -118,8 +124,10 @@ function normalizeEnvelopeForStorage(envelope: {
       senderIdentityKey,
       senderEphemeralKey,
       pqCiphertext,
-      signedPrekeyId:   envelope.bootstrap.signedPrekeyId,
-      pqSignedPrekeyId: envelope.bootstrap.pqSignedPrekeyId,
+      signedPrekeyId:    envelope.bootstrap.signedPrekeyId,
+      pqSignedPrekeyId:  envelope.bootstrap.pqSignedPrekeyId,
+      oneTimePrekeyId:   envelope.bootstrap.oneTimePrekeyId ?? 0,
+      pqOneTimePrekeyId: envelope.bootstrap.pqOneTimePrekeyId ?? 0,
     };
   }
 
@@ -137,9 +145,11 @@ export type MessagingRouteDeps = {
   findOrCreateConversation: typeof findOrCreateConversation;
   insertMessage: typeof insertMessage;
   getConversationMessages: typeof getConversationMessages;
+  getConversationBootstrap: typeof getConversationBootstrap;
   verifyConversationParticipant: typeof verifyConversationParticipant;
   getOtherParticipant: typeof getOtherParticipant;
   publishNewMessage: typeof publishNewMessage;
+  usersWithUsableBundles: typeof usersWithUsableBundles;
 };
 
 export function createMessagingRoutes(
@@ -154,9 +164,11 @@ export function createMessagingRoutes(
     findOrCreateConversation,
     insertMessage,
     getConversationMessages,
+    getConversationBootstrap,
     verifyConversationParticipant,
     getOtherParticipant,
     publishNewMessage,
+    usersWithUsableBundles,
     ...overrides,
   };
 
@@ -170,9 +182,11 @@ export function createMessagingRoutes(
       findOrCreateConversation,
       insertMessage,
       getConversationMessages,
+      getConversationBootstrap,
       verifyConversationParticipant,
       getOtherParticipant,
       publishNewMessage,
+      usersWithUsableBundles,
     } = deps;
 
     // ─── REST: Create / Get Conversation ──────────────────────────────────
@@ -245,6 +259,8 @@ export function createMessagingRoutes(
           "Conversation ready"
         );
 
+        const readySet = await usersWithUsableBundles(supabase, [otherUserId]);
+
         return reply.status(created ? 201 : 200).send({
           success: true,
           conversation: {
@@ -252,6 +268,7 @@ export function createMessagingRoutes(
             otherUserId,
             createdAt: conversation.created_at,
             updatedAt: conversation.updated_at,
+            signalReady: readySet.has(otherUserId),
           }
         });
       } catch (err) {
@@ -307,6 +324,11 @@ export function createMessagingRoutes(
           return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
         }
 
+        const otherUserIds = (data ?? []).map((conv: any) =>
+          conv.participant_one === userId ? conv.participant_two : conv.participant_one
+        );
+        const readySet = await usersWithUsableBundles(supabase, otherUserIds);
+
         const conversations = await Promise.all((data ?? []).map(async (conv: any) => {
           const isP1 = conv.participant_one === userId;
           const otherUserId = isP1 ? conv.participant_two : conv.participant_one;
@@ -328,6 +350,7 @@ export function createMessagingRoutes(
             initiatorUserId: conv.initiator_user_id ?? null,
             createdAt: conv.created_at,
             updatedAt: conv.updated_at,
+            signalReady: readySet.has(otherUserId),
             lastMessage: lastMsg ? {
               id: lastMsg.id,
               envelope: lastMsg.envelope,
@@ -404,9 +427,37 @@ export function createMessagingRoutes(
           return reply.status(403).send({ success: false, error: req.t("messaging.errors.blocked_send") });
         }
 
+        // C4: when a bootstrap is present, the sender claims an identity key the
+        // recipient will trust as the conversation initiator. Bind it to the JWT
+        // user by checking it matches the IK on record, so a sender cannot forge
+        // the conversation as if started by someone else.
+        if (envelope.bootstrap) {
+          const { data: senderPrekeys, error: ikError } = await (supabase as any)
+            .from("user_prekeys")
+            .select("identity_key_public")
+            .eq("user_id", userId)
+            .maybeSingle();
+
+          if (ikError) {
+            log.error(
+              { event: "send_message_ik_lookup_error", conversationId, userId, requestId, err: ikError.message },
+              "Failed to load sender identity key"
+            );
+            return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
+          }
+
+          if (!senderPrekeys?.identity_key_public || senderPrekeys.identity_key_public !== envelope.bootstrap.senderIdentityKey) {
+            log.warn(
+              { event: "send_message_ik_mismatch", conversationId, userId, requestId },
+              "Bootstrap sender identity key does not match the authenticated user"
+            );
+            return reply.status(403).send({ success: false, error: req.t("messaging.errors.identity_mismatch") });
+          }
+        }
+
         const bootstrapJson: BootstrapJson | null = envelope.bootstrap ?? null;
 
-        const { message, error: insertError } = await insertMessage(
+        const { message, initiatorUserId, error: insertError } = await insertMessage(
           supabase,
           conversationId,
           userId,
@@ -437,6 +488,9 @@ export function createMessagingRoutes(
               conversationId,
               messageId: message.id,
               senderId: userId,
+              // Canonical initiator so the recipient can deterministically choose
+              // initiator vs responder role and avoid the simultaneous-init deadlock.
+              initiatorUserId: initiatorUserId ?? null,
               envelope: Buffer.from(message.envelope).toString("base64"),
               attachmentUrl: message.attachment_url,
               attachmentType: message.attachment_type,
@@ -506,10 +560,12 @@ export function createMessagingRoutes(
 
         return reply.status(201).send({
           success: true,
+          initiatorUserId: initiatorUserId ?? null,
           message: {
             id: message.id,
             conversationId,
             senderId: userId,
+            initiatorUserId: initiatorUserId ?? null,
             envelope,
             attachmentUrl: message.attachment_url,
             attachmentType: message.attachment_type,
@@ -544,7 +600,7 @@ export function createMessagingRoutes(
           throw err;
         }
 
-        const { isParticipant, isBlocked, error: verifyError } = await verifyConversationParticipant(
+        const { isParticipant, isBlocked, conversation, error: verifyError } = await verifyConversationParticipant(
           supabase, conversationId, userId
         );
 
@@ -620,12 +676,71 @@ export function createMessagingRoutes(
           };
         });
 
-        return reply.status(200).send({ success: true, messages: structuredMessages, nextCursor });
+        return reply.status(200).send({
+          success: true,
+          initiatorUserId: conversation?.initiator_user_id ?? null,
+          messages: structuredMessages,
+          nextCursor,
+        });
       } catch (err) {
         log.error(
           { event: "messages_fetch_error", requestId, err },
           "Unexpected error fetching messages"
         );
+        return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
+      }
+    });
+
+    // ─── REST: Get Conversation Bootstrap (Bug 2) ─────────────────────────
+    // Pagination-independent retrieval of the PQXDH handshake material so a
+    // responder can always establish a session, even after the bootstrap message
+    // (n=0) has scrolled out of the recent-history window.
+
+    app.get("/messaging/conversations/:id/bootstrap", async (req, reply) => {
+      const requestId = req.id;
+      const log = req.log;
+      const { id: conversationId } = req.params as { id: string };
+
+      try {
+        let userId: string;
+        try {
+          const user = verifyAccessToken(req.headers.authorization);
+          userId = user.sub;
+        } catch (err) {
+          if (err instanceof AuthError) {
+            return reply.status(err.status).send({ success: false, error: req.t("common.errors.auth_required") });
+          }
+          throw err;
+        }
+
+        const { isParticipant, conversation, error: verifyError } = await verifyConversationParticipant(
+          supabase, conversationId, userId
+        );
+
+        if (verifyError) {
+          return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
+        }
+        if (!isParticipant) {
+          return reply.status(403).send({ success: false, error: req.t("messaging.errors.not_participant") });
+        }
+
+        const { bootstrap, senderId, error } = await getConversationBootstrap(supabase, conversationId);
+        if (error) {
+          log.error({ event: "bootstrap_fetch_failure", conversationId, userId, requestId, err: error.message }, "Failed to fetch bootstrap");
+          return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
+        }
+        if (!bootstrap) {
+          return reply.status(404).send({ success: false, error: req.t("common.errors.unable_to_process") });
+        }
+
+        return reply.status(200).send({
+          success: true,
+          bootstrap,
+          senderId,
+          initiatorUserId: conversation?.initiator_user_id ?? senderId ?? null,
+        });
+      } catch (err) {
+        log.error({ event: "bootstrap_fetch_error", requestId, err }, "Unexpected error fetching bootstrap");
         return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
       }
     });

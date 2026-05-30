@@ -69,6 +69,11 @@ export function createSseRoutes(overrides: Partial<SseRouteDeps> = {}) {
 
       send("connected", { userId });
 
+      // Track ids delivered during catch-up so the buffer flush below can't
+      // re-send a message that was both returned by the catch-up query and
+      // buffered by a concurrent live send (would be a duplicate).
+      const deliveredIds = new Set<string>();
+
       if (cursor) {
         try {
           const generator = getMessagesSinceCursor(supabase, userId, cursor);
@@ -80,6 +85,9 @@ export function createSseRoutes(overrides: Partial<SseRouteDeps> = {}) {
                 conversationId: msg.conversation_id,
                 messageId: msg.id,
                 senderId: msg.sender_id,
+                // Canonical initiator — mirrors the live send path so a bootstrap
+                // replayed on reconnect doesn't deadlock both clients into responders.
+                initiatorUserId: msg.initiator_user_id ?? null,
                 envelope: Buffer.from(msg.envelope).toString("base64"),
                 attachmentUrl: msg.attachment_url,
                 attachmentType: msg.attachment_type,
@@ -89,18 +97,21 @@ export function createSseRoutes(overrides: Partial<SseRouteDeps> = {}) {
                 replayEvent.bootstrap = msg.bootstrap_json;
               }
               send("message", replayEvent, msg.id);
+              deliveredIds.add(msg.id);
             }
             await new Promise<void>((resolve) => setImmediate(resolve));
           }
-
-          for (const { eventId, data } of state.buffer) {
-            send("message", data, eventId);
-          }
-          state.buffer.length = 0;
         } catch (err) {
           req.log.error({ err, userId }, "SSE catch-up failed");
         }
       }
+
+      // Flush any messages buffered during catch-up, skipping ones already sent.
+      for (const { eventId, data } of state.buffer) {
+        if (deliveredIds.has(eventId)) continue;
+        send("message", data, eventId);
+      }
+      state.buffer.length = 0;
 
       state.isLive = true;
     });

@@ -22,7 +22,14 @@ export interface BootstrapData {
   pqCiphertext:       Uint8Array;
   signedPrekeyId:     number;
   pqSignedPrekeyId:   number;
+  oneTimePrekeyId?:   number;
+  pqOneTimePrekeyId?: number;
 }
+
+// Expected key sizes for envelope validation (M9).
+const X25519_LEN = 32;          // dh public key, sender ephemeral
+const ED25519_PUB_LEN = 32;     // sender identity key (Ed25519, XEdDSA)
+const MLKEM768_CT_LEN = 1088;   // ML-KEM-768 ciphertext
 
 export interface MessageEnvelope {
   header:     MessageHeader;
@@ -66,6 +73,8 @@ export function encodeEnvelope(envelope: MessageEnvelope): Uint8Array {
       pqCiphertext:       envelope.bootstrap.pqCiphertext,
       signedPrekeyId:     envelope.bootstrap.signedPrekeyId,
       pqSignedPrekeyId:   envelope.bootstrap.pqSignedPrekeyId,
+      oneTimePrekeyId:    envelope.bootstrap.oneTimePrekeyId ?? 0,
+      pqOneTimePrekeyId:  envelope.bootstrap.pqOneTimePrekeyId ?? 0,
     };
   }
 
@@ -77,6 +86,15 @@ export function decodeEnvelope(data: Uint8Array): MessageEnvelope {
   const message = ProtoMessageEnvelope.decode(data);
   const obj = ProtoMessageEnvelope.toObject(message, { bytes: Uint8Array });
 
+  // M9: validate key/field sizes after decode so malformed payloads fail with a
+  // clear typed error rather than a deep throw inside the ratchet/handshake.
+  if (!(obj.header?.dhPublicKey instanceof Uint8Array) || obj.header.dhPublicKey.length !== X25519_LEN) {
+    throw new Error("Invalid envelope: header.dhPublicKey must be 32 bytes");
+  }
+  if (!(obj.ciphertext instanceof Uint8Array) || obj.ciphertext.length === 0) {
+    throw new Error("Invalid envelope: ciphertext is empty");
+  }
+
   const envelope: MessageEnvelope = {
     header: {
       dhPublicKey: obj.header.dhPublicKey,
@@ -87,12 +105,23 @@ export function decodeEnvelope(data: Uint8Array): MessageEnvelope {
   };
 
   if (obj.bootstrap?.senderIdentityKey?.length) {
+    if (obj.bootstrap.senderIdentityKey.length !== ED25519_PUB_LEN) {
+      throw new Error("Invalid envelope: bootstrap.senderIdentityKey must be 32 bytes");
+    }
+    if (obj.bootstrap.senderEphemeralKey?.length !== X25519_LEN) {
+      throw new Error("Invalid envelope: bootstrap.senderEphemeralKey must be 32 bytes");
+    }
+    if (obj.bootstrap.pqCiphertext?.length !== MLKEM768_CT_LEN) {
+      throw new Error("Invalid envelope: bootstrap.pqCiphertext must be 1088 bytes");
+    }
     envelope.bootstrap = {
       senderIdentityKey:  obj.bootstrap.senderIdentityKey,
       senderEphemeralKey: obj.bootstrap.senderEphemeralKey,
       pqCiphertext:       obj.bootstrap.pqCiphertext,
       signedPrekeyId:     obj.bootstrap.signedPrekeyId,
       pqSignedPrekeyId:   obj.bootstrap.pqSignedPrekeyId,
+      oneTimePrekeyId:    obj.bootstrap.oneTimePrekeyId || 0,
+      pqOneTimePrekeyId:  obj.bootstrap.pqOneTimePrekeyId || 0,
     };
   }
 

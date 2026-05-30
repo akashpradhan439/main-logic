@@ -67,12 +67,29 @@ const deps: Partial<KeysRouteDeps> = {
         signature:          "sig",
         pqSignature:        "pq-sig",
         oneTimePrekey:      "opk",
+        oneTimePrekeyId:    1,
         pqOneTimePrekey:    "pq-opk",
+        pqOneTimePrekeyId:  1,
         remainingOtpCount:  9,
+        remainingPqOtpCount: 9,
       },
       error: null,
     };
   },
+  // C3: bundle fetch is gated on an accepted connection between requester/target.
+  findConnectionBetweenUsers: async () => ({
+    row: {
+      id: "conn-1",
+      requester_id: scenario.userId,
+      addressee_id: scenario.otherUserId,
+      status: "accepted",
+      requester_blocked: false,
+      addressee_blocked: false,
+      updated_at: new Date().toISOString(),
+    },
+    error: null,
+  }),
+  isPairBlocked: () => false,
   AuthError,
 };
 

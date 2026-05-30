@@ -33,7 +33,14 @@ export function generateDHKeyPair(): DHKeyPair {
 }
 
 export function diffieHellman(privateKey: Uint8Array, publicKey: Uint8Array): Uint8Array {
-  return sodium.crypto_scalarmult(privateKey, publicKey);
+  const shared = sodium.crypto_scalarmult(privateKey, publicKey);
+  // L2: defensive rejection of all-zero output. libsodium already throws for
+  // most low-order points, but a typed error at the boundary is clearer than a
+  // silently-weak shared secret if any path slips through.
+  if (sodium.is_zero(shared)) {
+    throw new Error("X25519 produced an all-zero shared secret (low-order point)");
+  }
+  return shared;
 }
 
 export function ed25519ToX25519(publicKey: Uint8Array): Uint8Array {
@@ -73,6 +80,14 @@ export function sign(message: Uint8Array, privateKey: Uint8Array): Uint8Array {
 }
 
 export function verify(message: Uint8Array, signature: Uint8Array, publicKey: Uint8Array): boolean {
+  // L7: enforce sizes at the boundary so malformed inputs produce a clear typed
+  // error rather than an opaque libsodium throw.
+  if (signature.length !== sodium.crypto_sign_BYTES) {
+    throw new Error(`Invalid Ed25519 signature length: ${signature.length}`);
+  }
+  if (publicKey.length !== sodium.crypto_sign_PUBLICKEYBYTES) {
+    throw new Error(`Invalid Ed25519 public key length: ${publicKey.length}`);
+  }
   return sodium.crypto_sign_verify_detached(signature, message, publicKey);
 }
 

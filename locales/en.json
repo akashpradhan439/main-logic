@@ -30,6 +30,8 @@
       "not_participant": "You are not a participant in this conversation",
       "blocked_view": "You cannot view messages for this conversation",
       "blocked_send": "You cannot send messages to this user",
+      "invalid_envelope": "The message envelope is malformed",
+      "identity_mismatch": "Sender identity key does not match the authenticated user",
       "generic_failure": "Unable to create conversation right now"
     }
   }

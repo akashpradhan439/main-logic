@@ -111,12 +111,15 @@ async function sendMessageNotification(
     note.alert = { title: senderName, body: "Sent you a message" };
   }
 
+  // #11: keep the payload small — the push is only a wake-up; the client fetches
+  // the actual ciphertext via SSE/REST. Embedding the full envelope (ML-KEM PQ
+  // ciphertext ~1088B + bootstrap) can blow past the ~4KB APNs payload limit and
+  // make the bootstrap (first-message) push fail outright.
   note.payload = {
     type: "new_message",
     conversationId: event.conversationId,
     messageId: event.messageId,
     senderId: event.senderId,
-    envelope: event.envelope,
   };
 
   try {

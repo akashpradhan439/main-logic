@@ -25,6 +25,7 @@ const scenario: {
   messagesResult: { messages: MessageRow[]; error: Error | null };
   publishCalled: boolean;
   publishResult: boolean;
+  readyUserIds: string[];
 } = {
   userId: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
   otherUserId: "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
@@ -39,6 +40,7 @@ const scenario: {
   messagesResult: { messages: [], error: null },
   publishCalled: false,
   publishResult: true,
+  readyUserIds: [],
 };
 
 function resetScenario() {
@@ -55,6 +57,7 @@ function resetScenario() {
   scenario.messagesResult = { messages: [], error: null };
   scenario.publishCalled = false;
   scenario.publishResult = true;
+  scenario.readyUserIds = [];
 }
 
 // ─── Stubs ────────────────────────────────────────────────────────────────────
@@ -200,6 +203,8 @@ const deps: Partial<MessagingRouteDeps> = {
     scenario.publishCalled = true;
     return scenario.publishResult;
   },
+  usersWithUsableBundles: async (_supabase: any, userIds: string[]) =>
+    new Set(scenario.readyUserIds.filter((id) => userIds.includes(id))),
 };
 
 async function buildApp() {
@@ -285,6 +290,7 @@ test("Create conversation: success - new conversation created", async () => {
   const conv = makeConversation();
   scenario.connectionRow = makeConnection("accepted");
   scenario.findOrCreateResult = { conversation: conv, error: null, created: true };
+  scenario.readyUserIds = [scenario.otherUserId]; // peer has a usable bundle
 
   const app = await buildApp();
   const res = await app.inject({
@@ -299,6 +305,26 @@ test("Create conversation: success - new conversation created", async () => {
   assert.equal(body.success, true);
   assert.equal(body.conversation.id, scenario.conversationId);
   assert.equal(body.conversation.otherUserId, scenario.otherUserId);
+  assert.equal(body.conversation.signalReady, true); // #12
+  await app.close();
+});
+
+test("Create conversation: signalReady=false when peer has no usable bundle (#12)", async () => {
+  const conv = makeConversation();
+  scenario.connectionRow = makeConnection("accepted");
+  scenario.findOrCreateResult = { conversation: conv, error: null, created: true };
+  scenario.readyUserIds = []; // peer has NOT uploaded keys
+
+  const app = await buildApp();
+  const res = await app.inject({
+    method: "POST",
+    url: "/messaging/conversations",
+    headers: { authorization: "Bearer test" },
+    payload: { otherUserId: scenario.otherUserId },
+  });
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.json().conversation.signalReady, false);
   await app.close();
 });
 

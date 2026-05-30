@@ -1,34 +1,37 @@
+// L3: moved out of shared/ (it is a manual debug harness, not protocol code).
+// Run with: tsx scripts/debug-handshake.ts
 import {
   initCrypto,
   generateDHKeyPair,
+  generateSignKeyPair,
   generatePQKeyPair,
   sign,
-} from "./cryptography.js";
-import { initiateHandshake, respondToHandshake } from "./e2ee.js";
+} from "../shared/cryptography.js";
+import { initiateHandshake, respondToHandshake, type HandshakeBundle } from "../shared/e2ee.js";
 
 async function main() {
   console.log("Initializing crypto...");
   await initCrypto();
   console.log("Crypto initialized.");
 
-  const bobIK = generateDHKeyPair() as any;
+  // Identity keys are Ed25519 (XEdDSA); signatures are real so verification passes.
+  const bobIK = generateSignKeyPair();
   const bobSPK = generateDHKeyPair();
-  const bobSPKSig = new Uint8Array(64); 
   const bobPQSPK = generatePQKeyPair();
   const bobOPK = generateDHKeyPair();
   const bobPQOPK = generatePQKeyPair();
 
-  const bobBundle = {
+  const bobBundle: HandshakeBundle = {
     identityKey: bobIK.publicKey,
     signedPrekey: bobSPK.publicKey,
     pqSignedPrekey: bobPQSPK.publicKey,
-    signature: bobSPKSig,
-    pqSignature: new Uint8Array(64), // Dummy signature for debug
+    signature: sign(bobSPK.publicKey, bobIK.privateKey),
+    pqSignature: sign(bobPQSPK.publicKey, bobIK.privateKey),
     oneTimePrekey: bobOPK.publicKey,
     pqOneTimePrekey: bobPQOPK.publicKey,
   };
 
-  const aliceIK = generateDHKeyPair() as any;
+  const aliceIK = generateSignKeyPair();
   const handshakeResult = await initiateHandshake(aliceIK, bobBundle);
   console.log("Alice handshake result generated.");
 
@@ -44,7 +47,7 @@ async function main() {
   );
   console.log("Bob shared secret generated.");
 
-  if (Buffer.from(handshakeResult.sharedSecret).toString('hex') === Buffer.from(bobSharedSecret).toString('hex')) {
+  if (Buffer.from(handshakeResult.sharedSecret).toString("hex") === Buffer.from(bobSharedSecret).toString("hex")) {
     console.log("SUCCESS: Shared secrets match!");
   } else {
     console.log("FAILURE: Shared secrets DO NOT match!");
