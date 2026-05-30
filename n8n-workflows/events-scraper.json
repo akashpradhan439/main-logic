@@ -125,14 +125,14 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "url": "={{ ($env.AZURE_OPENAI_ENDPOINT || '').replace(/\\/$/, '') }}/chat/completions",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $env.GROQ_API_KEY }}"
+              "value": "=Bearer {{ $env.AZURE_OPENAI_API_KEY }}"
             },
             {
               "name": "Content-Type",
@@ -142,7 +142,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0,\n  \"max_tokens\": 1500,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"You are a data-extraction specialist. From the provided Google Search HTML, extract every event you can find. Output ONLY a valid JSON object of shape {\\\"events\\\":[{...}]}. Each event MUST contain: title (string), date (string, human-readable e.g. 'Sat, Jun 7'), time (string or null), venue (string or null), address (string or null), url (string or null), source (string e.g. 'BookMyShow' or null), price (string or null). Use null for missing fields. Do NOT include markdown, code fences, or any text outside the JSON object.\" },\n    { \"role\": \"user\", \"content\": {{ JSON.stringify('Query: ' + $json.query + '\\n\\nHTML:\\n' + ($json.html || '').slice(0, 12000)) }} }\n  ]\n}",
+        "jsonBody": "={\n  \"model\": \"{{ $env.AZURE_OPENAI_DEPLOYMENT || 'Llama-3.3-70B-Instruct' }}\",\n  \"temperature\": 0,\n  \"max_tokens\": 1500,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"You are a data-extraction specialist. From the provided Google Search HTML, extract every event you can find. Output ONLY a valid JSON object of shape {\\\"events\\\":[{...}]}. Each event MUST contain: title (string), date (string, human-readable e.g. 'Sat, Jun 7'), time (string or null), venue (string or null), address (string or null), url (string or null), source (string e.g. 'BookMyShow' or null), price (string or null). Use null for missing fields. Do NOT include markdown, code fences, or any text outside the JSON object.\" },\n    { \"role\": \"user\", \"content\": {{ JSON.stringify('Query: ' + $json.query + '\\n\\nHTML:\\n' + ($json.html || '').slice(0, 12000)) }} }\n  ]\n}",
         "options": {
           "timeout": 30000
         }

@@ -1,15 +1,15 @@
-import Groq from "groq-sdk";
-import { config } from "../config.js";
+import type {
+  ChatCompletionMessageParam,
+  ChatCompletionMessageToolCall,
+  ChatCompletionTool,
+} from "openai/resources/chat/completions";
+import { getAzureClient, getAzureDeployment, isAzureConfigured } from "./azureClient.js";
 import {
   searchNearbyPlaces,
   getPlaceDetails,
   type Place,
 } from "./foursquareClient.js";
 import { scrapeGoogleEvents, type EventResult } from "./eventsScraper.js";
-
-const groq = new Groq({ apiKey: config.groqApiKey });
-
-const GROQ_MODEL = "llama-3.3-70b-versatile";
 
 export type SuggestionCandidate = {
   userId: string;
@@ -97,11 +97,12 @@ Do not include markdown, code fences, or any text outside the JSON object.`;
 }
 
 export async function suggestInterests(bio: string, languageCode?: string | null): Promise<string[]> {
-  if (!config.groqApiKey) return [];
+  const client = getAzureClient();
+  if (!client) return [];
 
   try {
-    const completion = await groq.chat.completions.create({
-      model: GROQ_MODEL,
+    const completion = await client.chat.completions.create({
+      model: getAzureDeployment(),
       max_tokens: 256,
       temperature: 0.5,
       response_format: { type: "json_object" },
@@ -139,13 +140,14 @@ export async function suggestConnections(
 ): Promise<SuggestionResult[]> {
   if (candidates.length === 0) return [];
 
-  if (!config.groqApiKey) {
+  const client = getAzureClient();
+  if (!client) {
     return fallbackReasons(candidates);
   }
 
   try {
-    const completion = await groq.chat.completions.create({
-      model: GROQ_MODEL,
+    const completion = await client.chat.completions.create({
+      model: getAzureDeployment(),
       max_tokens: 1024,
       temperature: 0.5,
       response_format: { type: "json_object" },
@@ -212,8 +214,8 @@ export type AssistantCard =
   | { type: "events"; data: EventResult[] }
   | { type: "place_detail"; data: Place };
 
-const SEARCH_PLACES_TOOL = {
-  type: "function" as const,
+const SEARCH_PLACES_TOOL: ChatCompletionTool = {
+  type: "function",
   function: {
     name: "search_places",
     description:
@@ -241,8 +243,8 @@ const SEARCH_PLACES_TOOL = {
   },
 };
 
-const SEARCH_EVENTS_TOOL = {
-  type: "function" as const,
+const SEARCH_EVENTS_TOOL: ChatCompletionTool = {
+  type: "function",
   function: {
     name: "search_events",
     description:
@@ -264,8 +266,8 @@ const SEARCH_EVENTS_TOOL = {
   },
 };
 
-const GET_PLACE_DETAILS_TOOL = {
-  type: "function" as const,
+const GET_PLACE_DETAILS_TOOL: ChatCompletionTool = {
+  type: "function",
   function: {
     name: "get_place_details",
     description:
@@ -343,12 +345,15 @@ type ToolFanOutResult = {
 };
 
 async function executeToolCall(
-  toolCall: Groq.Chat.Completions.ChatCompletionMessageToolCall,
+  toolCall: ChatCompletionMessageToolCall,
   ctx: AssistantUserContext,
   foursquareApiKey: string
 ): Promise<ToolFanOutResult> {
-  const name = toolCall.function?.name ?? "";
-  const argsRaw = toolCall.function?.arguments ?? "{}";
+  // OpenAI SDK v6 tool calls always have function-shaped payloads under .function;
+  // keep this defensive in case a custom tool type appears later.
+  const fn = (toolCall as { function?: { name?: string; arguments?: string } }).function;
+  const name = fn?.name ?? "";
+  const argsRaw = fn?.arguments ?? "{}";
 
   let args: Record<string, unknown> = {};
   try {
@@ -507,18 +512,11 @@ async function executeToolCall(
   }
 }
 
-function isToolUseFailed(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
-  const anyErr = err as { status?: number; error?: { error?: { code?: string } } };
-  if (anyErr.status !== 400) return false;
-  return anyErr.error?.error?.code === "tool_use_failed";
-}
-
-async function noToolsCompletion(
-  messages: Groq.Chat.Completions.ChatCompletionMessageParam[]
-): Promise<string> {
-  const c = await groq.chat.completions.create({
-    model: GROQ_MODEL,
+async function noToolsCompletion(messages: ChatCompletionMessageParam[]): Promise<string> {
+  const client = getAzureClient();
+  if (!client) return "";
+  const c = await client.chat.completions.create({
+    model: getAzureDeployment(),
     max_tokens: 1024,
     temperature: 0.6,
     messages,
@@ -533,6 +531,13 @@ export async function chatWithAssistant(
   foursquareApiKey: string,
   tappedPlace: Place | null = null
 ): Promise<{ reply: string; cards: AssistantCard[] }> {
+  if (!isAzureConfigured()) {
+    throw new Error(
+      "Azure OpenAI not configured. Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY."
+    );
+  }
+  const client = getAzureClient()!;
+  const deployment = getAzureDeployment();
   const systemPrompt = buildAssistantSystemPrompt(userContext);
 
   // Tap UX short-circuit: the user tapped a specific place card; the client
@@ -551,7 +556,7 @@ export async function chatWithAssistant(
       }) +
       `\nWrite a short, warm reply (2-3 sentences) about THIS place by name. Do not list other places. Do not call any tool. Do not reveal the placeId.`;
 
-    const tapMessages: Groq.Chat.Completions.ChatCompletionMessageParam[] = [
+    const tapMessages: ChatCompletionMessageParam[] = [
       { role: "system", content: systemPrompt },
       { role: "system", content: tapSystem },
       ...history.map((h) => ({ role: h.role, content: h.content })),
@@ -565,7 +570,7 @@ export async function chatWithAssistant(
     };
   }
 
-  const pass1Messages: Groq.Chat.Completions.ChatCompletionMessageParam[] = [
+  const pass1Messages: ChatCompletionMessageParam[] = [
     { role: "system", content: systemPrompt },
     ...history.map((h) => ({ role: h.role, content: h.content })),
     { role: "user", content: userMessage },
@@ -573,8 +578,8 @@ export async function chatWithAssistant(
 
   let pass1;
   try {
-    pass1 = await groq.chat.completions.create({
-      model: GROQ_MODEL,
+    pass1 = await client.chat.completions.create({
+      model: deployment,
       max_tokens: 1024,
       temperature: 0.6,
       tools: [SEARCH_PLACES_TOOL, SEARCH_EVENTS_TOOL, GET_PLACE_DETAILS_TOOL],
@@ -582,23 +587,19 @@ export async function chatWithAssistant(
       messages: pass1Messages,
     });
   } catch (err) {
-    if (isToolUseFailed(err)) {
-      // Model emitted a malformed tool call. Fall back to a tool-less prose reply.
-      const reply = await noToolsCompletion(pass1Messages);
-      return { reply, cards: [] };
-    }
-    throw err;
+    // If the model emits an unparseable tool call or the tool pass fails for
+    // any reason, fall back to a tool-less prose reply rather than 500ing.
+    void err;
+    const reply = await noToolsCompletion(pass1Messages);
+    return { reply, cards: [] };
   }
 
   const choice = pass1.choices[0];
   const finishReason = choice?.finish_reason;
   const assistantMsg = choice?.message;
+  const toolCalls = (assistantMsg?.tool_calls ?? []) as ChatCompletionMessageToolCall[];
 
-  if (
-    finishReason !== "tool_calls" ||
-    !assistantMsg?.tool_calls ||
-    assistantMsg.tool_calls.length === 0
-  ) {
+  if (finishReason !== "tool_calls" || toolCalls.length === 0) {
     return {
       reply: assistantMsg?.content ?? "",
       cards: [],
@@ -606,27 +607,25 @@ export async function chatWithAssistant(
   }
 
   const fanOut = await Promise.all(
-    assistantMsg.tool_calls.map((tc) =>
-      executeToolCall(tc, userContext, foursquareApiKey)
-    )
+    toolCalls.map((tc) => executeToolCall(tc, userContext, foursquareApiKey))
   );
 
   const cards: AssistantCard[] = fanOut
     .map((r) => r.card)
     .filter((c): c is AssistantCard => c !== null);
 
-  const pass2Messages: Groq.Chat.Completions.ChatCompletionMessageParam[] = [
+  const pass2Messages: ChatCompletionMessageParam[] = [
     ...pass1Messages,
     {
       role: "assistant",
-      content: assistantMsg.content ?? "",
-      tool_calls: assistantMsg.tool_calls,
+      content: assistantMsg?.content ?? "",
+      tool_calls: toolCalls,
     },
     ...fanOut.map((r) => r.toolMessage),
   ];
 
-  const pass2 = await groq.chat.completions.create({
-    model: GROQ_MODEL,
+  const pass2 = await client.chat.completions.create({
+    model: deployment,
     max_tokens: 1024,
     temperature: 0.6,
     messages: pass2Messages,
@@ -635,3 +634,5 @@ export async function chatWithAssistant(
   const reply = pass2.choices[0]?.message?.content ?? "";
   return { reply, cards };
 }
+
+export { isAzureConfigured };

@@ -6,7 +6,7 @@ import {
   suggestConnections,
   suggestInterests,
   type SuggestionCandidate,
-} from "../lib/groqClient.js";
+} from "../lib/aiClient.js";
 
 const SUGGESTIONS_CACHE_TTL_SECONDS = 900; // 15 minutes
 const MAX_CANDIDATES_FOR_CLAUDE = 20;

@@ -7,7 +7,7 @@ import {
   chatWithAssistant,
   type AssistantCard,
   type AssistantUserContext,
-} from "../lib/groqClient.js";
+} from "../lib/aiClient.js";
 import { getPlaceDetails, type Place } from "../lib/foursquareClient.js";
 import { config } from "../config.js";
 

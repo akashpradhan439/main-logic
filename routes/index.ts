@@ -11,6 +11,7 @@ import aiRoutes from "./ai.js";
 import meetupRoutes from "./meetup.js";
 import meetupSuggestionsRoutes from "./meetup-suggestions.js";
 import assistantRoutes from "./assistant.js";
+import swarmRoutes from "./swarm.js";
 
 export default async function registerRoutes(app: FastifyInstance) {
   app.register(healthRoutes);
@@ -25,4 +26,5 @@ export default async function registerRoutes(app: FastifyInstance) {
   app.register(meetupRoutes);
   app.register(meetupSuggestionsRoutes);
   app.register(assistantRoutes);
+  app.register(swarmRoutes);
 }

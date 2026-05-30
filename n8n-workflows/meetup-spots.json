@@ -74,14 +74,14 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "url": "={{ ($env.AZURE_OPENAI_ENDPOINT || '').replace(/\\/$/, '') }}/chat/completions",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $env.GROQ_API_KEY }}"
+              "value": "=Bearer {{ $env.AZURE_OPENAI_API_KEY }}"
             },
             {
               "name": "Content-Type",
@@ -91,7 +91,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.3,\n  \"max_tokens\": 256,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"You are a search query formatter. Output ONLY a valid JSON object, no markdown or explanation.\" },\n    { \"role\": \"user\", \"content\": {{ JSON.stringify('User intent: ' + ($('Webhook').item.json.body.type || 'any') + '\\nContext: ' + JSON.stringify($json.context) + '\\n\\nReturn JSON: {\"types\":\"comma_separated_ola_types\",\"radius\":number_in_meters,\"language\":\"en\"}\\n\\nRules:\\n- Pick 1-3 Ola Maps place types from: cafe, restaurant, bar, park, gym, museum, art_gallery, shopping_mall, bookstore, tourist_attraction, night_club, bakery\\n- coffee intent => types=cafe,bakery\\n- food => types=restaurant,cafe\\n- outdoor => types=park,tourist_attraction\\n- bar => types=bar,night_club\\n- shopping => types=shopping_mall\\n- fitness => types=gym,park\\n- any => pick based on interests, bio, timeOfDay\\n- radius: 1500 (urban default)\\n- morning/afternoon: favor cafe, park, restaurant\\n- evening/night: favor bar, restaurant, night_club') }} }\n  ]\n}",
+        "jsonBody": "={\n  \"model\": \"{{ $env.AZURE_OPENAI_DEPLOYMENT || 'Llama-3.3-70B-Instruct' }}\",\n  \"temperature\": 0.3,\n  \"max_tokens\": 256,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"You are a search query formatter. Output ONLY a valid JSON object, no markdown or explanation.\" },\n    { \"role\": \"user\", \"content\": {{ JSON.stringify('User intent: ' + ($('Webhook').item.json.body.type || 'any') + '\\nContext: ' + JSON.stringify($json.context) + '\\n\\nReturn JSON: {\"types\":\"comma_separated_ola_types\",\"radius\":number_in_meters,\"language\":\"en\"}\\n\\nRules:\\n- Pick 1-3 Ola Maps place types from: cafe, restaurant, bar, park, gym, museum, art_gallery, shopping_mall, bookstore, tourist_attraction, night_club, bakery\\n- coffee intent => types=cafe,bakery\\n- food => types=restaurant,cafe\\n- outdoor => types=park,tourist_attraction\\n- bar => types=bar,night_club\\n- shopping => types=shopping_mall\\n- fitness => types=gym,park\\n- any => pick based on interests, bio, timeOfDay\\n- radius: 1500 (urban default)\\n- morning/afternoon: favor cafe, park, restaurant\\n- evening/night: favor bar, restaurant, night_club') }} }\n  ]\n}",
         "options": {
           "timeout": 15000
         }
@@ -176,14 +176,14 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "url": "={{ ($env.AZURE_OPENAI_ENDPOINT || '').replace(/\\/$/, '') }}/chat/completions",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $env.GROQ_API_KEY }}"
+              "value": "=Bearer {{ $env.AZURE_OPENAI_API_KEY }}"
             },
             {
               "name": "Content-Type",
@@ -193,7 +193,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.5,\n  \"max_tokens\": 1024,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"You are a meet-up spot recommender. Output ONLY a valid JSON object. No markdown, no explanation.\" },\n    { \"role\": \"user\", \"content\": {{ JSON.stringify('User profile: ' + JSON.stringify($json.context) + '\\nNearby places: ' + JSON.stringify($json.places) + '\\n\\nPick the top 5 spots best suited for a casual meet-up given this user\\'s interests, bio, and time-of-day. For each, write a 1-2 sentence reason tailored to the user.\\n\\nReturn JSON shape exactly: {\"recommendations\": [{\"placeId\":\"...\",\"reason\":\"...\"}]}\\nSort best match first. Use the place_id field as placeId.') }} }\n  ]\n}",
+        "jsonBody": "={\n  \"model\": \"{{ $env.AZURE_OPENAI_DEPLOYMENT || 'Llama-3.3-70B-Instruct' }}\",\n  \"temperature\": 0.5,\n  \"max_tokens\": 1024,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"You are a meet-up spot recommender. Output ONLY a valid JSON object. No markdown, no explanation.\" },\n    { \"role\": \"user\", \"content\": {{ JSON.stringify('User profile: ' + JSON.stringify($json.context) + '\\nNearby places: ' + JSON.stringify($json.places) + '\\n\\nPick the top 5 spots best suited for a casual meet-up given this user\\'s interests, bio, and time-of-day. For each, write a 1-2 sentence reason tailored to the user.\\n\\nReturn JSON shape exactly: {\"recommendations\": [{\"placeId\":\"...\",\"reason\":\"...\"}]}\\nSort best match first. Use the place_id field as placeId.') }} }\n  ]\n}",
         "options": {
           "timeout": 15000
         }
