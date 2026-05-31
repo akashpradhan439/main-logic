@@ -9,6 +9,7 @@ A conversational assistant personalized to each user (name, bio, interests, H3 l
 | `places`       | Foursquare Places API                               | Horizontally scrollable list of place tiles |
 | `events`       | Google Events (via n8n + Playwright + Groq parser)  | Vertical list of event tiles               |
 | `place_detail` | Foursquare Places API (`/places/{id}`)              | Full-bleed detail sheet (one place)        |
+| `connections`  | Supabase (the user's accepted connections)          | Chooser list when a named connection is ambiguous |
 
 Chat history is persisted server-side per user in the `assistant_messages` table. Two endpoints:
 
@@ -98,6 +99,25 @@ Every response follows the same outer shape:
 }
 ```
 
+### `connections` card
+
+Returned only when a connection the user named matches **more than one** accepted
+connection. Render a chooser; on tap, send a follow-up `/assistant/chat` turn with
+`connectionUserId` set to the chosen `userId` (see [Connection-aware planning](#connection-aware-planning)).
+
+```ts
+{
+  type: "connections",
+  data: ConnectionMatch[]
+}
+
+type ConnectionMatch = {
+  userId: string;     // accepted-connection user id; echo back as connectionUserId
+  name: string;       // "First Last"
+  interests: string[];
+};
+```
+
 ### `Place` object
 
 | Field      | Type     | Required | Notes                                                                  |
@@ -144,8 +164,9 @@ Content-Type: application/json
 
 ```ts
 {
-  message: string,        // 1-500 chars, trimmed server-side
-  placeId?: string        // 1-120 chars; pass when the user taps a Place card
+  message: string,            // 1-500 chars, trimmed server-side
+  placeId?: string,           // 1-120 chars; pass when the user taps a Place card
+  connectionUserId?: string   // UUID; pass when the user taps a connections chooser card
 }
 ```
 
@@ -153,6 +174,7 @@ Content-Type: application/json
 |-----------|--------|----------|-------------------------------------------------------------------------------|
 | `message` | string | yes      | The user's text. Min 1 char, max 500 chars. Trimmed before processing.        |
 | `placeId` | string | no       | Foursquare `placeId` from a previously-returned card. **Pass this whenever the user taps a card** — the server short-circuits the LLM tool path, fetches the detail synchronously, and always returns a `place_detail` card with a focused reply. |
+| `connectionUserId` | string (UUID) | no | A `userId` from a `connections` chooser card. **Pass this when the user taps a connection** to lock it in as the active planning companion. Resend the original intent in `message` (e.g. "find a cafe to meet them"). |
 
 #### Example A — free-text turn (no tap)
 
@@ -363,6 +385,21 @@ Returned when:
 - Any other unhandled exception.
 
 > The DB insert failing is **not** a 500. The server still returns 200 with `messageId: null` and a valid `reply`/`cards`. Client must handle `messageId === null`.
+
+---
+
+## Connection-aware planning
+
+The assistant can fold one of the user's **accepted connections** into place/event planning.
+
+- **Naming a connection:** when the user references a connection by name ("find a cafe to meet **John**", "somewhere near **Sarah**") or includes a connection's raw `userId` in `message`, the server resolves it against the user's accepted connections.
+- **Single match:** the connection becomes the active planning companion. Place searches are re-centered on the **midpoint** between the user and the connection, and the connection's interests are factored into suggestions. The reply refers to them by name.
+- **Multiple matches:** the server returns a `connections` chooser card and asks which one. No search runs that turn. The client renders the chooser and, on tap, resends the turn with `connectionUserId` set.
+- **No place/event ask:** if the user only mentions a connection ("remember my friend John"), the assistant simply confirms it has noted them — no cards.
+- **Persistence:** the active connection is remembered across turns (carried in assistant-row `metadata.rememberedConnections`), so follow-ups like "what about a park instead?" keep using it without re-naming.
+- **Privacy:** only mutually-accepted connections are resolvable. Unknown or non-accepted names yield a graceful "couldn't find that connection" reply.
+
+> `metadata.rememberedConnections` is an internal field surfaced via `/history`; clients should ignore it (per the unknown-field rule).
 
 ---
 
@@ -658,14 +695,22 @@ export type EventResult = {
   price?: string | null;
 };
 
+export type ConnectionMatch = {
+  userId: string;
+  name: string;
+  interests: string[];
+};
+
 export type AssistantCard =
   | { type: "places"; data: Place[] }
   | { type: "events"; data: EventResult[] }
-  | { type: "place_detail"; data: Place };
+  | { type: "place_detail"; data: Place }
+  | { type: "connections"; data: ConnectionMatch[] };
 
 export type ChatRequest = {
   message: string;
   placeId?: string;
+  connectionUserId?: string;
 };
 
 export type ChatResponse = {

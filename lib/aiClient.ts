@@ -11,6 +11,7 @@ import {
   type Place,
 } from "./foursquareClient.js";
 import { scrapeGoogleEvents, type EventResult } from "./eventsScraper.js";
+import { midpoint, type ConnectionContext } from "./connectionContext.js";
 
 export type SuggestionCandidate = {
   userId: string;
@@ -210,10 +211,31 @@ export type AssistantUserContext = {
   coords: { lat: number; lng: number } | null;
 };
 
+export type ConnectionMatch = {
+  userId: string;
+  name: string;
+  interests: string[];
+};
+
 export type AssistantCard =
   | { type: "places"; data: Place[] }
   | { type: "events"; data: EventResult[] }
-  | { type: "place_detail"; data: Place };
+  | { type: "place_detail"; data: Place }
+  | { type: "connections"; data: ConnectionMatch[] };
+
+/** A function the route injects to resolve a mentioned connection (bound to
+ * supabase + the requesting user id). Keeps aiClient free of Supabase. */
+export type ConnectionResolver = (ref: {
+  name?: string | null;
+  userId?: string | null;
+}) => Promise<ConnectionContext[]>;
+
+export type AssistantConnectionOptions = {
+  /** Connections carried forward from prior turns (seeded from message metadata). */
+  rememberedConnections?: ConnectionContext[];
+  /** Resolver for connections newly named in this turn. */
+  resolveConnections?: ConnectionResolver;
+};
 
 const SEARCH_PLACES_TOOL: ChatCompletionTool = {
   type: "function",
@@ -533,32 +555,51 @@ const ASSISTANT_TOOLS_BY_NAME: Record<AssistantToolName, ChatCompletionTool> = {
   get_place_details: GET_PLACE_DETAILS_TOOL,
 };
 
+type TurnClassification = {
+  tool: AssistantToolName | null;
+  connection: { mentioned: boolean; name: string | null; userId: string | null };
+};
+
+const UUID_RE =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i;
+
 // This Foundry deployment rejects any request that offers more than one tool
 // (400 UnsupportedToolUse: "does not support more than one tool call"). So we
 // classify the user's intent first and offer at most ONE tool on the main call.
-// A no-tools JSON completion never trips that limit.
-async function selectAssistantTool(
+// The same JSON pass also extracts any connection the user named, so connection
+// awareness costs no extra LLM round-trip. A no-tools JSON completion never
+// trips the one-tool limit.
+async function classifyTurn(
   client: OpenAI,
   deployment: string,
   userMessage: string,
   history: Array<{ role: "user" | "assistant"; content: string }>
-): Promise<AssistantToolName | null> {
+): Promise<TurnClassification> {
+  const empty: TurnClassification = {
+    tool: null,
+    connection: { mentioned: false, name: null, userId: null },
+  };
   const recent = history
     .slice(-4)
     .map((h) => `${h.role}: ${h.content}`)
     .join("\n");
   const system =
-    `Classify the user's latest message to pick which single tool (if any) should run.\n` +
-    `Return ONLY JSON: {"tool":"search_places"|"search_events"|"get_place_details"|"none"}.\n` +
+    `Classify the user's latest message for a local-guide assistant.\n` +
+    `Return ONLY JSON: {"tool":"search_places"|"search_events"|"get_place_details"|"none","connection":{"mentioned":boolean,"name":string|null,"userId":string|null}}.\n` +
+    `tool:\n` +
     `- search_places: they want somewhere to go, eat, drink, or visit (cafes, restaurants, parks, bars, gyms, attractions).\n` +
     `- search_events: they ask about events, concerts, festivals, gigs, or what's happening on a date.\n` +
     `- get_place_details: they ask for more detail about one specific place already mentioned.\n` +
-    `- none: greetings, small talk, general advice, or anything not needing live place/event data.`;
+    `- none: greetings, small talk, general advice, or anything not needing live place/event data.\n` +
+    `connection: set mentioned=true when the user refers to a specific friend/connection they want to involve in plans (e.g. "meet John", "plan with Sarah", "somewhere near Alex"). ` +
+    `Put the person's name in "name" (else null) and any UUID present in "userId" (else null). ` +
+    `Do NOT treat place names, cities, or venues as connections.`;
   const user = (recent ? `Recent conversation:\n${recent}\n\n` : "") + `Latest message: ${userMessage}`;
+  const uuidInMessage = userMessage.match(UUID_RE)?.[0] ?? null;
   try {
     const c = await client.chat.completions.create({
       model: deployment,
-      max_tokens: 30,
+      max_tokens: 80,
       temperature: 0,
       response_format: { type: "json_object" },
       messages: [
@@ -566,14 +607,26 @@ async function selectAssistantTool(
         { role: "user", content: user },
       ],
     });
-    const parsed = JSON.parse(c.choices[0]?.message?.content ?? "{}") as { tool?: unknown };
+    const parsed = JSON.parse(c.choices[0]?.message?.content ?? "{}") as {
+      tool?: unknown;
+      connection?: { mentioned?: unknown; name?: unknown; userId?: unknown };
+    };
     const t = parsed.tool;
-    if (t === "search_places" || t === "search_events" || t === "get_place_details") {
-      return t;
-    }
-    return null;
+    const tool: AssistantToolName | null =
+      t === "search_places" || t === "search_events" || t === "get_place_details" ? t : null;
+    const conn = parsed.connection ?? {};
+    const name = typeof conn.name === "string" && conn.name.trim() ? conn.name.trim() : null;
+    const userId =
+      (typeof conn.userId === "string" && UUID_RE.test(conn.userId) ? conn.userId : null) ??
+      uuidInMessage;
+    const mentioned = conn.mentioned === true || name !== null || userId !== null;
+    return { tool, connection: { mentioned, name, userId } };
   } catch {
-    return null;
+    // Even on classifier failure, honor a raw UUID in the message.
+    if (uuidInMessage) {
+      return { tool: null, connection: { mentioned: true, name: null, userId: uuidInMessage } };
+    }
+    return empty;
   }
 }
 
@@ -582,8 +635,13 @@ export async function chatWithAssistant(
   userMessage: string,
   userContext: AssistantUserContext,
   foursquareApiKey: string,
-  tappedPlace: Place | null = null
-): Promise<{ reply: string; cards: AssistantCard[] }> {
+  tappedPlace: Place | null = null,
+  connectionOptions: AssistantConnectionOptions = {}
+): Promise<{
+  reply: string;
+  cards: AssistantCard[];
+  rememberedConnections: ConnectionContext[];
+}> {
   if (!isAzureConfigured()) {
     throw new Error(
       "Azure OpenAI not configured. Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY."
@@ -592,6 +650,14 @@ export async function chatWithAssistant(
   const client = getAzureClient()!;
   const deployment = getAzureDeployment();
   const systemPrompt = buildAssistantSystemPrompt(userContext);
+
+  // Connections carried forward from earlier turns (deduped by userId).
+  const remembered: ConnectionContext[] = [];
+  for (const c of connectionOptions.rememberedConnections ?? []) {
+    if (c && typeof c.userId === "string" && !remembered.some((r) => r.userId === c.userId)) {
+      remembered.push(c);
+    }
+  }
 
   // Tap UX short-circuit: the user tapped a specific place card; the client
   // wants a focused reply about THAT place. Skip the tool-call pass entirely
@@ -620,21 +686,114 @@ export async function chatWithAssistant(
     return {
       reply,
       cards: [{ type: "place_detail", data: tappedPlace }],
+      rememberedConnections: remembered,
     };
   }
 
+  // Classify intent + extract any named connection in a single JSON pass.
+  const { tool: selectedTool, connection } = await classifyTurn(
+    client,
+    deployment,
+    userMessage,
+    history
+  );
+
+  // Resolve a newly named connection against the user's accepted connections.
+  const connNotes: string[] = [];
+  if (connection.mentioned && connectionOptions.resolveConnections) {
+    const matches = await connectionOptions.resolveConnections({
+      name: connection.name,
+      userId: connection.userId,
+    });
+    if (matches.length > 1) {
+      // Ambiguous — offer a chooser card and ask which one. Don't remember,
+      // don't run a place/event search this turn.
+      const names = matches.map((m) => m.name).join(", ");
+      const chooserMessages: ChatCompletionMessageParam[] = [
+        { role: "system", content: systemPrompt },
+        {
+          role: "system",
+          content:
+            `The user referred to a connection, but several accepted connections match: ${names}. ` +
+            `Briefly ask which one they mean. Do not assume, and do not list any places or events yet.`,
+        },
+        ...history.map((h) => ({ role: h.role, content: h.content })),
+        { role: "user", content: userMessage },
+      ];
+      const reply = await noToolsCompletion(chooserMessages);
+      return {
+        reply,
+        cards: [
+          {
+            type: "connections",
+            data: matches.map((m) => ({
+              userId: m.userId,
+              name: m.name,
+              interests: m.interests,
+            })),
+          },
+        ],
+        rememberedConnections: remembered,
+      };
+    }
+    const [match] = matches;
+    if (match) {
+      if (!remembered.some((r) => r.userId === match.userId)) remembered.push(match);
+    } else {
+      connNotes.push(
+        `Note: no accepted connection matched "${connection.name ?? connection.userId}". ` +
+          `Tell the user you couldn't find that connection, then keep helping.`
+      );
+    }
+  }
+
+  // The connection we plan around this turn is the most recently remembered one.
+  const activeConnection = remembered.length > 0 ? remembered[remembered.length - 1] : null;
+
+  // Place searches center on the midpoint between the user and the connection.
+  let effectiveCoords = userContext.coords;
+  if (activeConnection && selectedTool === "search_places") {
+    effectiveCoords = midpoint(userContext.coords, activeConnection.coords);
+  }
+  const toolContext: AssistantUserContext = { ...userContext, coords: effectiveCoords };
+
+  if (activeConnection) {
+    const interestText = activeConnection.interests.length
+      ? ` Their interests include: ${activeConnection.interests.join(", ")}.`
+      : "";
+    connNotes.push(
+      `Planning context: the user is including their connection ${activeConnection.name} in plans.${interestText} ` +
+        `Refer to ${activeConnection.name} by name and factor their interests into suggestions.`
+    );
+    if (selectedTool === "search_places" && effectiveCoords) {
+      connNotes.push(
+        `Place searches this turn are centered on the midpoint between the user and ${activeConnection.name}.`
+      );
+    }
+    if (!selectedTool) {
+      connNotes.push(
+        `The user isn't asking for places or events right now — simply confirm you've noted ${activeConnection.name} for future planning.`
+      );
+    }
+  }
+
+  const baseSystem: ChatCompletionMessageParam[] = [{ role: "system", content: systemPrompt }];
+  if (connNotes.length > 0) {
+    baseSystem.push({ role: "system", content: connNotes.join("\n") });
+  }
+
   const pass1Messages: ChatCompletionMessageParam[] = [
-    { role: "system", content: systemPrompt },
+    ...baseSystem,
     ...history.map((h) => ({ role: h.role, content: h.content })),
     { role: "user", content: userMessage },
   ];
 
   // Pick at most one tool up front — the deployment 400s if we offer more than
-  // one. If none is relevant (small talk, general advice), answer directly.
-  const selectedTool = await selectAssistantTool(client, deployment, userMessage, history);
+  // one. If none is relevant (small talk, general advice, a pure connection
+  // mention), answer directly.
   if (!selectedTool) {
     const reply = await noToolsCompletion(pass1Messages);
-    return { reply, cards: [] };
+    return { reply, cards: [], rememberedConnections: remembered };
   }
 
   let pass1;
@@ -652,7 +811,7 @@ export async function chatWithAssistant(
     // any reason, fall back to a tool-less prose reply rather than 500ing.
     void err;
     const reply = await noToolsCompletion(pass1Messages);
-    return { reply, cards: [] };
+    return { reply, cards: [], rememberedConnections: remembered };
   }
 
   const choice = pass1.choices[0];
@@ -664,11 +823,12 @@ export async function chatWithAssistant(
     return {
       reply: assistantMsg?.content ?? "",
       cards: [],
+      rememberedConnections: remembered,
     };
   }
 
   const fanOut = await Promise.all(
-    toolCalls.map((tc) => executeToolCall(tc, userContext, foursquareApiKey))
+    toolCalls.map((tc) => executeToolCall(tc, toolContext, foursquareApiKey))
   );
 
   const cards: AssistantCard[] = fanOut
@@ -693,7 +853,7 @@ export async function chatWithAssistant(
   });
 
   const reply = pass2.choices[0]?.message?.content ?? "";
-  return { reply, cards };
+  return { reply, cards, rememberedConnections: remembered };
 }
 
 export { isAzureConfigured };

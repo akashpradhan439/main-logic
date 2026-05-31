@@ -9,6 +9,10 @@ import {
   type AssistantUserContext,
 } from "../lib/aiClient.js";
 import { getPlaceDetails, type Place } from "../lib/foursquareClient.js";
+import {
+  findAcceptedConnections,
+  type ConnectionContext,
+} from "../lib/connectionContext.js";
 import { config } from "../config.js";
 
 const HISTORY_WINDOW_SIZE = 10;
@@ -18,8 +22,23 @@ const ChatSchema = z
   .object({
     message: z.string().min(1).max(500),
     placeId: z.string().min(1).max(120).optional(),
+    connectionUserId: z.string().uuid().optional(),
   })
   .strict();
+
+/** Pull the cumulative remembered-connection set from the most recent assistant
+ * row's metadata so it carries forward across turns (history is DESC ordered). */
+function seedRememberedConnections(
+  historyRows: Array<{ role: string; metadata: Record<string, unknown> | null }>
+): ConnectionContext[] {
+  for (const row of historyRows) {
+    if (row.role !== "assistant") continue;
+    const remembered = (row.metadata as { rememberedConnections?: unknown } | null)
+      ?.rememberedConnections;
+    if (Array.isArray(remembered)) return remembered as ConnectionContext[];
+  }
+  return [];
+}
 
 /**
  * Extract every (name, placeId) reference visible in an assistant turn's
@@ -109,6 +128,7 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
         }
         const message = parsed.data.message.trim();
         const tappedPlaceId = parsed.data.placeId;
+        const chosenConnectionUserId = parsed.data.connectionUserId;
 
         const { data: me, error: meErr } = await supabase
           .from("users")
@@ -191,12 +211,39 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
           }
         }
 
-        const { reply: aiReply, cards } = await chatWithAssistant(
+        // Seed remembered connections from the latest assistant turn so the
+        // active connection persists across the conversation.
+        let seededRemembered = seedRememberedConnections(
+          (historyRows ?? []) as Array<{
+            role: string;
+            metadata: Record<string, unknown> | null;
+          }>
+        );
+
+        // Chooser-card tap: the client locked in a specific connection. Resolve
+        // it directly and make it the most recently remembered (active) one.
+        if (chosenConnectionUserId) {
+          const [chosenConn] = await findAcceptedConnections(supabase, userId, {
+            userId: chosenConnectionUserId,
+          });
+          if (chosenConn) {
+            seededRemembered = [
+              ...seededRemembered.filter((c) => c.userId !== chosenConn.userId),
+              chosenConn,
+            ];
+          }
+        }
+
+        const { reply: aiReply, cards, rememberedConnections } = await chatWithAssistant(
           history,
           message,
           userContext,
           foursquareApiKey,
-          tappedPlace
+          tappedPlace,
+          {
+            rememberedConnections: seededRemembered,
+            resolveConnections: (ref) => findAcceptedConnections(supabase, userId, ref),
+          }
         );
 
         // Persist both turns
@@ -210,7 +257,10 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
                 user_id: userId,
                 role: "assistant",
                 content: aiReply,
-                metadata: { cards } as { cards: AssistantCard[] },
+                metadata: { cards, rememberedConnections } as {
+                  cards: AssistantCard[];
+                  rememberedConnections: ConnectionContext[];
+                },
               },
             ])
             .select("id, role, created_at")
