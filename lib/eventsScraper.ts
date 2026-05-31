@@ -11,6 +11,7 @@ export interface EventResult {
   link?: string;
   source?: string;
   price?: string;
+  imageUrl?: string;
 }
 
 type RawScraperEvent = {
@@ -22,6 +23,7 @@ type RawScraperEvent = {
   url?: unknown;
   source?: unknown;
   price?: unknown;
+  imageUrl?: unknown;
 };
 
 function s(v: unknown): string | undefined {
@@ -43,6 +45,7 @@ function normalize(raw: RawScraperEvent): EventResult | null {
   const link = s(raw.url);
   const source = s(raw.source);
   const price = s(raw.price);
+  const imageUrl = s(raw.imageUrl);
 
   if (time) result.time = time;
   if (venue) result.venue = venue;
@@ -50,6 +53,7 @@ function normalize(raw: RawScraperEvent): EventResult | null {
   if (link) result.link = link;
   if (source) result.source = source;
   if (price) result.price = price;
+  if (imageUrl) result.imageUrl = imageUrl;
   return result;
 }
 
