@@ -5,8 +5,9 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "build": "rimraf dist && tsc && node -e \"const fs=require('fs'); const d='dist/shared'; if(!fs.existsSync(d))fs.mkdirSync(d,{recursive:true}); fs.copyFileSync('shared/envelope.proto',d+'/envelope.proto')\"",
+    "build": "rimraf dist && tsc && node -e \"const fs=require('fs'); const d='dist/shared'; if(!fs.existsSync(d))fs.mkdirSync(d,{recursive:true}); fs.copyFileSync('shared/envelope.proto',d+'/envelope.proto'); const pub='dist/demo/public'; fs.mkdirSync(pub,{recursive:true}); fs.cpSync('demo/public',pub,{recursive:true});\"",
     "dev": "tsx index.ts",
+    "demo": "tsx demo/server.ts",
     "start": "node dist/index.js",
     "worker:location": "tsx workers/locationUpdatedWorker.ts",
     "worker:notifications": "tsx workers/pushNotificationWorker.ts",

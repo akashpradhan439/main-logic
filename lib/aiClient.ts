@@ -237,6 +237,21 @@ export type AssistantConnectionOptions = {
   resolveConnections?: ConnectionResolver;
 };
 
+/**
+ * Optional realtime introspection hook (additive). Lets a UI narrate the
+ * assistant's inference as it happens. Steps are mapped onto the same four
+ * agent roles used by the swarm so the demo can color them consistently:
+ *   planner   → intent classification
+ *   researcher→ connection resolution + live tool calls (places/events)
+ *   executor  → reply composition
+ *   critic    → grounding / no-fabrication note
+ * Default is a no-op, so existing callers are unaffected.
+ */
+export type AssistantStep =
+  | { type: "agent"; agent: "planner" | "researcher" | "executor" | "critic"; message: string }
+  | { type: "card"; card: AssistantCard };
+export type AssistantStepEmit = (step: AssistantStep) => void;
+
 const SEARCH_PLACES_TOOL: ChatCompletionTool = {
   type: "function",
   function: {
@@ -636,7 +651,8 @@ export async function chatWithAssistant(
   userContext: AssistantUserContext,
   foursquareApiKey: string,
   tappedPlace: Place | null = null,
-  connectionOptions: AssistantConnectionOptions = {}
+  connectionOptions: AssistantConnectionOptions = {},
+  onStep: AssistantStepEmit = () => {}
 ): Promise<{
   reply: string;
   cards: AssistantCard[];
@@ -663,6 +679,8 @@ export async function chatWithAssistant(
   // wants a focused reply about THAT place. Skip the tool-call pass entirely
   // and produce a single prose completion grounded in the pre-fetched detail.
   if (tappedPlace) {
+    onStep({ type: "agent", agent: "researcher", message: `Loaded tapped place: ${tappedPlace.name}` });
+    onStep({ type: "agent", agent: "executor", message: "Composing reply about the tapped place" });
     const tapSystem =
       `The user just tapped a place card in the app. Detail data already fetched:\n` +
       JSON.stringify({
@@ -683,6 +701,7 @@ export async function chatWithAssistant(
     ];
 
     const reply = await noToolsCompletion(tapMessages);
+    onStep({ type: "card", card: { type: "place_detail", data: tappedPlace } });
     return {
       reply,
       cards: [{ type: "place_detail", data: tappedPlace }],
@@ -691,21 +710,29 @@ export async function chatWithAssistant(
   }
 
   // Classify intent + extract any named connection in a single JSON pass.
+  onStep({ type: "agent", agent: "planner", message: "Classifying intent (tool + connection)…" });
   const { tool: selectedTool, connection } = await classifyTurn(
     client,
     deployment,
     userMessage,
     history
   );
+  onStep({
+    type: "agent",
+    agent: "planner",
+    message: `Intent → tool=${selectedTool ?? "none"}${connection.mentioned ? `, connection=${connection.name ?? connection.userId ?? "mentioned"}` : ""}`,
+  });
 
   // Resolve a newly named connection against the user's accepted connections.
   const connNotes: string[] = [];
   if (connection.mentioned && connectionOptions.resolveConnections) {
+    onStep({ type: "agent", agent: "researcher", message: `Resolving connection "${connection.name ?? connection.userId ?? ""}" against accepted connections…` });
     const matches = await connectionOptions.resolveConnections({
       name: connection.name,
       userId: connection.userId,
     });
     if (matches.length > 1) {
+      onStep({ type: "agent", agent: "researcher", message: `Ambiguous — ${matches.length} connections matched; asking user to choose` });
       // Ambiguous — offer a chooser card and ask which one. Don't remember,
       // don't run a place/event search this turn.
       const names = matches.map((m) => m.name).join(", ");
@@ -720,26 +747,25 @@ export async function chatWithAssistant(
         ...history.map((h) => ({ role: h.role, content: h.content })),
         { role: "user", content: userMessage },
       ];
+      onStep({ type: "agent", agent: "executor", message: "Composing clarifying question" });
       const reply = await noToolsCompletion(chooserMessages);
+      const chooserCard: AssistantCard = {
+        type: "connections",
+        data: matches.map((m) => ({ userId: m.userId, name: m.name, interests: m.interests })),
+      };
+      onStep({ type: "card", card: chooserCard });
       return {
         reply,
-        cards: [
-          {
-            type: "connections",
-            data: matches.map((m) => ({
-              userId: m.userId,
-              name: m.name,
-              interests: m.interests,
-            })),
-          },
-        ],
+        cards: [chooserCard],
         rememberedConnections: remembered,
       };
     }
     const [match] = matches;
     if (match) {
       if (!remembered.some((r) => r.userId === match.userId)) remembered.push(match);
+      onStep({ type: "agent", agent: "researcher", message: `Resolved connection: ${match.name}${match.coords ? " (will plan around midpoint)" : ""}` });
     } else {
+      onStep({ type: "agent", agent: "researcher", message: "No accepted connection matched" });
       connNotes.push(
         `Note: no accepted connection matched "${connection.name ?? connection.userId}". ` +
           `Tell the user you couldn't find that connection, then keep helping.`
@@ -792,10 +818,12 @@ export async function chatWithAssistant(
   // one. If none is relevant (small talk, general advice, a pure connection
   // mention), answer directly.
   if (!selectedTool) {
+    onStep({ type: "agent", agent: "executor", message: "No live data needed — replying directly" });
     const reply = await noToolsCompletion(pass1Messages);
     return { reply, cards: [], rememberedConnections: remembered };
   }
 
+  onStep({ type: "agent", agent: "researcher", message: `Calling tool: ${selectedTool}` });
   let pass1;
   try {
     pass1 = await client.chat.completions.create({
@@ -835,6 +863,11 @@ export async function chatWithAssistant(
     .map((r) => r.card)
     .filter((c): c is AssistantCard => c !== null);
 
+  for (const card of cards) onStep({ type: "card", card });
+  const resultCount = cards.reduce((n, c) => n + (Array.isArray((c as { data?: unknown }).data) ? (c as { data: unknown[] }).data.length : 1), 0);
+  onStep({ type: "agent", agent: "researcher", message: `Tool returned ${resultCount} result(s)` });
+  onStep({ type: "agent", agent: "executor", message: "Composing grounded reply from tool results" });
+
   const pass2Messages: ChatCompletionMessageParam[] = [
     ...pass1Messages,
     {
@@ -853,6 +886,7 @@ export async function chatWithAssistant(
   });
 
   const reply = pass2.choices[0]?.message?.content ?? "";
+  onStep({ type: "agent", agent: "critic", message: `Grounded in ${cards.length} live card(s); no fabricated names` });
   return { reply, cards, rememberedConnections: remembered };
 }
 

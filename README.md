@@ -1,101 +1,114 @@
-# Lokaal — Privacy-First Location-Based Social Platform
+# Lokaal — A Privacy-First Proximity Network, Planned by an Agent Swarm
 
-A production-grade Fastify/TypeScript backend for a location-based, end-to-end encrypted messaging and meetup platform, featuring a **4-agent AI swarm** for privacy-safe connection and meetup intelligence.
+> **Microsoft Build AI Hackathon — Agent Swarm category**
+
+Lokaal is a production-grade Fastify/TypeScript backend for a location-based, end-to-end encrypted social platform. Its centerpiece is a **4-agent AI swarm** — Planner → Researcher → Executor → Critic — that plans safe, specific, real-world meetups. Every suggestion is grounded in real connection and venue data, adversarially validated for safety and specificity, supervised by an optional human, and fully traceable.
+
+Single-model AI hands you a confident answer you can't verify, can't audit, and can't trust. Lokaal's swarm refuses to surface a suggestion until four specialized agents agree it's grounded and safe.
 
 ---
 
-## AI Agent Swarm Architecture
+## Architecture Diagram
 
-The platform includes a multi-agent swarm (`/swarm/*`) that orchestrates 4 specialized agents to plan meetups and suggest connections using real proximity and interest data.
+> Rendered natively by GitHub (Mermaid). The same diagram is exported as an image in the slide deck (`deliverables/`).
 
 ```mermaid
 flowchart TD
-    U([User Request]) -->|POST /swarm/meetup\nor /swarm/connections| P
+    U([User Request]) -->|"POST /swarm/meetup or /swarm/connections"| P
 
     subgraph SWARM["🤖 Agent Swarm — lib/agentSwarm.ts"]
-        P["🟦 Planner\n(Orchestrator)\n─────────────\n• Decomposes request\n• Creates TaskPlan\n• Routes to Researcher"]
-        R["🟨 Researcher\n─────────────\n• Fetches user profile\n• Connection graph\n• Proximity signals\n• Nearby venues (Foursquare)"]
-        E["🟩 Executor\n─────────────\n• Generates 2–4 suggestions\n• Grounded in ResearchData\n• Azure OpenAI (GPT-4o)"]
-        C["🟥 Critic\n(Validator)\n─────────────\n• Validates specificity\n• Safety check\n• Adversarial review"]
-        H([👤 Human\nApproval])
+        P["🟦 Planner (Orchestrator)<br/>• Decomposes request<br/>• Creates TaskPlan"]
+        R["🟨 Researcher<br/>• Connection graph + proximity<br/>• Venues at user↔connection MIDPOINT<br/>• Uber H3 spatial index"]
+        E["🟩 Executor<br/>• Azure AI Foundry (Llama-3.3-70B)<br/>• 2–4 suggestions, grounded in ResearchData"]
+        C["🟥 Critic (Validator)<br/>• Specificity + grounding check<br/>• Azure AI Content Safety<br/>• Adversarial review"]
+        H([👤 Human Approval])
 
         P -->|TaskPlan| R
         R -->|ResearchData| E
         E -->|SuggestionOutput| C
-        C -->|REJECTED + feedback| E
+        C -->|"REJECTED + issues[]"| E
         C -->|"after 3 attempts"| H
         H -->|"approve / reject + feedback"| E
     end
 
-    C -->|APPROVED| F([✅ Final Result\n+ Full Trace])
+    C -->|APPROVED| F([✅ Final Result + Full Trace])
 
     subgraph INFRA["Infrastructure"]
-        DB[(Supabase\nPostgreSQL)]
-        REDIS[(Redis\nBlackboard)]
-        MQ[RabbitMQ\nEvent Bus]
+        DB[(Supabase / PostgreSQL)]
+        REDIS[(Redis Blackboard<br/>Azure Cache for Redis)]
+        MQ[RabbitMQ Event Bus]
     end
 
     R --> DB
-    SWARM -->|SwarmState| REDIS
-    REDIS -->|loadSwarmState| SWARM
+    R --> FSQ[Foursquare Places API]
+    SWARM <-->|SwarmState| REDIS
 ```
 
-### Agent Roles
-
-| Agent | Color | Responsibility |
-|---|---|---|
-| **Planner** | Cyan | Orchestrator — decomposes user request into a TaskPlan |
-| **Researcher** | Yellow | Fetches live data: connections, proximity signals, nearby venues |
-| **Executor** | Green | Generates personalized suggestions grounded in ResearchData |
-| **Critic** | Red | Adversarial validator — rejects weak output, loops back up to 3× |
-
-See [`agents.md`](agents.md) for the full Swarm Constitution and Rules of Engagement.
-
----
-
-## System Architecture
+### System Architecture
 
 ```mermaid
 flowchart LR
-    iOS["📱 iOS Client"]
+    iOS["📱 iOS Client"] --> NGINX[Nginx :80]
+    NGINX --> API
 
-    subgraph API["API Server — index.ts (Fastify 5)"]
-        R_LOC["/location/hex"]
-        R_CONN["/connections"]
-        R_MSG["/messaging/*"]
-        R_AI["/ai/*"]
+    subgraph API["API Server — Fastify 5"]
         R_SWARM["/swarm/*"]
-        R_SSE["/messaging/stream (SSE)"]
         R_AST["/assistant/chat"]
+        R_AI["/ai/*"]
+        R_MSG["/messaging/* (SSE)"]
     end
 
     subgraph WORKERS["Workers"]
-        WL["locationUpdatedWorker\n(H3 overlap detection)"]
-        WP["pushNotificationWorker\n(APNs delivery)"]
-        WM["messagingWorker\n(offline push)"]
+        WL["location overlap"]
+        WP["push notifications"]
+        WM["offline messaging"]
     end
 
-    iOS --> API
-    API --> DB[(Supabase\nPostgreSQL)]
-    API --> REDIS[(Redis\nCache)]
-    API -->|publish| MQ[RabbitMQ\napp.events]
+    API --> DB[(Supabase)]
+    API --> REDIS[(Redis)]
+    API -->|publish| MQ[RabbitMQ app.events]
     MQ --> WL & WP & WM
-    WP & WM -->|APNs| iOS
-    R_AI & R_AST --> GROQ["Groq / Azure OpenAI"]
-    R_SWARM --> SWARM["Agent Swarm\n(4 agents)"]
+    R_SWARM & R_AST & R_AI --> AZURE["Azure AI Foundry<br/>Llama-3.3-70B-Instruct"]
 ```
 
 ---
 
-## Key Features
+## Agent Constitution (Rules of Engagement)
 
-- **Post-Quantum E2EE Messaging** — PQXDH (X3DH + ML-KEM-768) + double-ratchet chain management
-- **AI Agent Swarm** — 4-agent adversarial loop with human-in-the-loop approval and full traceability
-- **Location Proximity** — Uber H3 spatial indexing for privacy-safe proximity detection
-- **Real-time Delivery** — Server-Sent Events (SSE) with cursor-based catchup
-- **Azure OpenAI** — GPT-4o via Azure AI Foundry with Groq fallback
-- **Redis Blackboard** — All swarm state persisted in Redis (Azure Cache for Redis in production)
-- **Full Traceability** — Every agent step logged with timing, inputs, outputs (`GET /swarm/trace/:runId`)
+The full constitution — each agent's Role, Goal, Tooling, and Handoff rules — lives in **[`agents.md`](agents.md)**. Summary of the rules every run must obey:
+
+1. **No fabrication** — the Executor may only reference `connectionId`s and venue names present in `ResearchData`; the Critic rejects anything else.
+2. **Specificity** — every meetup suggestion must name a specific person *and* a specific venue at a specific time. Generic suggestions are rejected.
+3. **Privacy / data-minimization** — only first names, interests, and coarse midpoint location reach the model. No last names, contact info, or precise GPS. Only **mutually-accepted** connections are resolvable.
+4. **Safety first** — the Critic rejects unsafe/inappropriate content; Azure AI Content Safety is integrated as an additional gate.
+5. **Adversarial loop** — on rejection, the Critic returns specific `issues[]`; the Executor must address them. Max 3 attempts.
+6. **Human-in-the-loop** — after 3 rejections the swarm pauses (`phase = "awaiting_human"`) for approval via `POST /swarm/:runId/approve`.
+7. **Full traceability** — every step appends an `AgentTrace` (agent, timing, input/output summary, status); retrievable via `GET /swarm/trace/:runId`.
+8. **Fail gracefully** — Planner falls back to a default plan; Critic fails open; errors surface as `phase = "error"` rather than crashing.
+
+| Agent | Color | Responsibility |
+|---|---|---|
+| **Planner** | 🟦 Cyan | Orchestrator — decomposes the request into a TaskPlan |
+| **Researcher** | 🟨 Yellow | Fetches connections, proximity signals, and **midpoint-grounded** venues |
+| **Executor** | 🟩 Green | Generates suggestions grounded strictly in ResearchData (Azure/Llama) |
+| **Critic** | 🟥 Red | Adversarial validator + Content Safety — rejects weak/unsafe output, loops back up to 3× |
+
+---
+
+## AI Tools Disclosed
+
+Every Microsoft / external AI service used:
+
+| Service | Where it's used |
+|---|---|
+| **Azure AI Foundry** — Llama-3.3-70B-Instruct (serverless, OpenAI-compatible) | The reasoning engine for **all four swarm agents** and the conversational assistant (`lib/azureClient.ts`, `lib/aiClient.ts`). Azure-only — there is no Groq fallback. |
+| **Azure Cache for Redis** | The swarm "blackboard" — shared `SwarmState` persistence (`lib/redis.ts`). |
+| **Azure AI Content Safety** | Integrated into the Critic agent as a configurable safety gate. |
+| Foursquare Places API | Real venue data for the Researcher (`lib/foursquareClient.ts`). |
+| Uber H3 | Privacy-preserving spatial indexing (coarse hex cells, never raw GPS). |
+| n8n (automation layer) | Orchestrates the events-scraper and meetup workflows (`n8n-workflows/`). |
+
+> **Orchestration note:** the swarm is a **custom TypeScript agent loop** (`lib/agentSwarm.ts`) inspired by Semantic Kernel handoff patterns — not a third-party framework dependency.
 
 ---
 
@@ -103,122 +116,87 @@ flowchart LR
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/swarm/meetup` | Run the full meetup planning swarm |
-| `POST` | `/swarm/connections` | Run the connection suggestion swarm |
-| `GET` | `/swarm/trace/:runId` | Inspect the full agent thought process |
+| `POST` | `/swarm/meetup` | Run the full 4-agent meetup planning swarm |
+| `POST` | `/swarm/connections` | Run the 4-agent connection suggestion swarm |
+| `GET` | `/swarm/trace/:runId` | Inspect the full agent thought process (reads from Redis) |
 | `POST` | `/swarm/:runId/approve` | Human-in-the-loop: approve or reject with feedback |
 | `GET` | `/swarm/status` | LLM provider health check |
 
 All swarm endpoints require `Authorization: Bearer <JWT>`.
 
-**Example — run meetup swarm:**
-```bash
-curl -X POST https://api.example.com/swarm/meetup \
-  -H "Authorization: Bearer $JWT"
-```
-
-**Response:**
+**Validated response** (live run, Azure AI Foundry / Llama-3.3-70B):
 ```json
 {
   "success": true,
-  "runId": "9f3a2c...",
+  "runId": "53f68714-6961-428d-8cc6-dda876fc81bd",
   "phase": "complete",
   "llmProvider": "azure",
-  "supervisor": { "approved": true, "attempts": 2, "lastFeedback": "..." },
+  "supervisor": { "approved": true, "attempts": 1, "lastFeedback": "All suggestions meet the required criteria" },
   "result": {
     "taskType": "meetup",
     "meetupSuggestions": [
-      {
-        "type": "detailed",
-        "connectionId": "uuid",
-        "connectionName": "Priya",
-        "title": "Afternoon code session",
-        "place": "Blue Tokai Coffee Roasters",
-        "time": "This Saturday, 3pm",
-        "text": "You and Priya both love TypeScript and have been in the same area 4 times this week. Blue Tokai has great wifi and a quiet vibe — perfect for pairing on a side project."
-      }
+      { "type": "detailed", "connectionId": "uuid", "connectionName": "Pooja", "title": "Coffee & catch-up", "place": "100 Feet Road, Chattarpur", "time": "This Saturday, 3pm", "text": "..." }
     ]
   },
   "trace": [
-    { "agent": "planner", "status": "completed", "durationMs": 412, "outputSummary": "intent=\"Plan meetup suggestions\", tasks=4" },
-    { "agent": "researcher", "status": "completed", "durationMs": 890, "outputSummary": "3 connections, 7 venues" },
-    { "agent": "executor", "status": "completed", "durationMs": 1240, "outputSummary": "3 suggestions", "attempt": 1 },
-    { "agent": "critic", "status": "rejected", "durationMs": 680, "outputSummary": "REJECTED: venue not in research data", "attempt": 1 },
-    { "agent": "executor", "status": "completed", "durationMs": 1100, "outputSummary": "3 suggestions", "attempt": 2 },
-    { "agent": "critic", "status": "approved", "durationMs": 620, "outputSummary": "APPROVED", "attempt": 2 }
+    { "agent": "planner",    "status": "completed", "durationMs": 6071, "outputSummary": "intent=\"plan meetup\", tasks=4" },
+    { "agent": "researcher", "status": "completed", "durationMs": 2081, "outputSummary": "5 connections, 4 venues (midpoint-grounded)" },
+    { "agent": "executor",   "status": "completed", "durationMs": 11108, "outputSummary": "3 suggestions", "attempt": 1 },
+    { "agent": "critic",     "status": "approved",  "durationMs": 3995, "outputSummary": "APPROVED", "attempt": 1 }
   ]
 }
 ```
 
 ---
 
-## Setup (under 10 minutes)
+## Setup
 
 ### Prerequisites
-- Node.js 20+
-- Docker (for RabbitMQ)
-- Supabase project
-- Redis instance
+- **Docker** + Docker Compose (recommended path — runs the whole stack)
+- Or: **Node.js 20+** for local dev
+- A **Supabase** project and a **Redis** instance (managed `rediss://` works)
+- An **Azure AI Foundry** deployment (Llama-3.3-70B-Instruct or compatible)
+- API keys: Foursquare (venues); optional APNs (push), Ola Maps + n8n (automation)
 
-### 1. Clone and install
+### Installation
 ```bash
 git clone <repo-url>
 cd main-logic
 npm install
-```
 
-### 2. Configure environment
-```bash
+# Configure environment — copy the template and fill in real values
 cp .env.example .env
+#   (edit .env — never commit it)
 ```
 
-Required variables:
-```env
-# Core
-SUPABASE_URL=https://xxx.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=...
-JWT_SECRET=...
-REDIS_URL=redis://localhost:6379
+### Running the Swarm
 
-# Azure OpenAI (recommended for hackathon demo)
-AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com/
-AZURE_OPENAI_API_KEY=...
-AZURE_OPENAI_DEPLOYMENT=gpt-4o
-
-# Fallback LLM (used if Azure not configured)
-GROQ_API_KEY=...
-
-# Venue data (Foursquare)
-FOURSQUARE_API_KEY=...
-
-# Messaging (optional for swarm demo)
-SKIP_RABBITMQ=true
-```
-
-### 3. Start RabbitMQ (optional)
+**Option A — Full stack with Docker (recommended):**
 ```bash
-docker-compose up -d
+# Builds the API image and starts api + workers + rabbitmq + n8n + nginx
+docker compose -f docker-compose.prod.yml up -d --build
+
+# Verify the swarm is live on Azure
+curl -s http://localhost/swarm/status
+# → {"success":true,"llmProvider":"azure","azureConfigured":true,"deployment":"Llama-3.3-70B-Instruct"}
 ```
 
-### 4. Apply database migrations
+**Option B — Local dev:**
 ```bash
-# Via Supabase CLI
-supabase db push
+docker compose up -d            # RabbitMQ only
+npm run dev                     # API with hot reload on :3000
 ```
 
-### 5. Start the API
+**Run a swarm and watch the agents collaborate:**
 ```bash
-npm run dev
-```
+# Mint a short-lived test token (inside the running api container)
+TOK=$(docker exec mainlogic-api node -e "const jwt=require('jsonwebtoken');process.stdout.write(jwt.sign({sub:'<USER_UUID>',phone:'+0000000000',type:'access'},process.env.JWT_SECRET,{expiresIn:'2h'}))")
 
-### 6. Test the swarm
-```bash
-# Check provider status
-curl http://localhost:3000/swarm/status
+# Trigger the meetup swarm (via the nginx gateway on :80)
+curl -s -X POST http://localhost/swarm/meetup -H "Authorization: Bearer $TOK" | jq '{phase, llmProvider, supervisor}'
 
-# Run a meetup swarm (requires valid JWT)
-curl -X POST http://localhost:3000/swarm/meetup \
-  -H "Authorization: Bearer $JWT"
+# Watch the colour-coded agent conversation in real time
+docker compose -f docker-compose.prod.yml logs -f --tail=0 api | grep --line-buffered -E "PLANNER|RESEARCHER|EXECUTOR|CRITIC|SWARM"
 ```
 
 ---
@@ -226,22 +204,22 @@ curl -X POST http://localhost:3000/swarm/meetup \
 ## Project Structure
 
 ```
-├── agents.md              ← Swarm Constitution
+├── agents.md              ← Swarm Constitution (Rules of Engagement)
+├── .env.example           ← Environment template (no secrets)
+├── deliverables/          ← Hackathon submission bundle
 ├── lib/
 │   ├── agentSwarm.ts      ← 4-agent swarm (Planner, Researcher, Executor, Critic)
-│   ├── azureClient.ts     ← Azure OpenAI / Groq LLM abstraction
-│   ├── groqClient.ts      ← Existing AI (connections, interests, assistant)
+│   ├── azureClient.ts     ← Azure AI Foundry client
+│   ├── aiClient.ts        ← Assistant + connection/interest AI (Azure)
+│   ├── connectionContext.ts ← Accepted-connection resolution + midpoint() helper
 │   └── ...
 ├── routes/
 │   ├── swarm.ts           ← /swarm/* endpoints
-│   ├── ai.ts              ← /ai/connections/suggestions, /ai/interests
-│   ├── assistant.ts       ← /assistant/chat (tool-calling AI)
+│   ├── assistant.ts       ← /assistant/chat (connection-aware, tool-calling)
 │   └── ...
-├── shared/
-│   ├── e2ee.ts            ← PQXDH + double-ratchet
-│   ├── cryptography.ts    ← Noble.js wrappers
-│   └── ...
+├── shared/                ← E2EE (PQXDH + ML-KEM-768), H3, auth
 ├── workers/               ← RabbitMQ consumers
+├── n8n-workflows/         ← Automation layer
 └── supabase/migrations/   ← Database schema
 ```
 
@@ -251,14 +229,25 @@ curl -X POST http://localhost:3000/swarm/meetup \
 
 | Layer | Technology |
 |---|---|
-| API | Fastify 5 + TypeScript (ES2022) |
+| API | Fastify 5 + TypeScript (ES2022, strict) |
 | AI Orchestration | Custom agent swarm — `lib/agentSwarm.ts` |
-| LLM | Azure OpenAI (GPT-4o) · Groq (llama-3.3-70b) fallback |
+| LLM | **Azure AI Foundry — Llama-3.3-70B-Instruct** (Azure-only) |
 | State / Blackboard | Redis (Azure Cache for Redis) |
+| Safety | Azure AI Content Safety (Critic gate) |
 | Database | Supabase / PostgreSQL |
 | Cryptography | Noble.js — X25519, Ed25519, ML-KEM-768, AES-256-GCM |
-| Messaging | RabbitMQ topic exchange |
-| Location | Uber H3 spatial indexing |
-| Real-time | Server-Sent Events (SSE) |
-| Push | Apple Push Notification Service (APNs) |
-| Venues | Foursquare Places API |
+| Messaging | RabbitMQ topic exchange · Server-Sent Events |
+| Location / Venues | Uber H3 spatial indexing · Foursquare Places API |
+| Deploy | Docker Compose (api + 3 workers + rabbitmq + n8n + scraper + nginx) |
+
+---
+
+## Team Roles
+
+This project was built **solo**.
+
+| Member | Role | Responsibilities |
+|---|---|---|
+| **Akash** ([@bekindamen](https://github.com/bekindamen)) | Founder & Full-Stack Engineer | End-to-end ownership: agent swarm design & orchestration (`agentSwarm.ts`), Azure AI Foundry integration, connection-aware planning, E2EE messaging, location/proximity engine, infrastructure (Docker, RabbitMQ, n8n), and all submission deliverables. |
+
+> _Solo build — a single engineer shipped the full production-grade, containerized multi-agent system._

@@ -34,3 +34,7 @@ coverage/
 .claude/settings.local.json
 CLAUDE.md
 docs/messaging-api.md
+
+# demo session signing secret (local)
+demo/public/.session_secret
+demo/.session_secret

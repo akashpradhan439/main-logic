@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lokaal · Agent Swarm Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:," />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot"></span> Lokaal <span class="muted">· 4-Agent Swarm</span>
+      </div>
+      <div class="topbar-right">
+        <span id="session-info" class="session-info">connecting…</span>
+        <button id="logout" class="ghost">Sign out</button>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="connections">Connection Suggestions</button>
+      <button class="tab" data-tab="meetup">Meetup Suggestions</button>
+      <button class="tab" data-tab="assistant">AI Assistant</button>
+    </nav>
+
+    <div class="legend">
+      <span class="legend-label">Agents:</span>
+      <span class="agent-chip planner">Planner</span>
+      <span class="agent-chip researcher">Researcher</span>
+      <span class="agent-chip executor">Executor</span>
+      <span class="agent-chip critic">Critic</span>
+    </div>
+
+    <!-- Connections panel -->
+    <section class="panel active" data-panel="connections">
+      <div class="panel-head">
+        <div>
+          <h2>Connection Suggestions</h2>
+          <p class="desc">One-shot swarm: ranks who you should connect with, grounded in shared interests &amp; proximity, validated by the Critic.</p>
+        </div>
+        <div class="actions">
+          <button class="run-btn" data-run="connections">Run swarm</button>
+          <button class="stop-btn" data-stop="connections" disabled>Stop</button>
+        </div>
+      </div>
+      <div class="split">
+        <div class="log" data-log="connections" aria-live="polite"></div>
+        <div class="results" data-results="connections"></div>
+      </div>
+    </section>
+
+    <!-- Meetup panel -->
+    <section class="panel" data-panel="meetup">
+      <div class="panel-head">
+        <div>
+          <h2>Meetup Suggestions</h2>
+          <p class="desc">One-shot swarm: proposes specific meetups (person + venue + time) grounded on the midpoint between you and each connection.</p>
+        </div>
+        <div class="actions">
+          <button class="run-btn" data-run="meetup">Run swarm</button>
+          <button class="stop-btn" data-stop="meetup" disabled>Stop</button>
+        </div>
+      </div>
+      <div class="split">
+        <div class="log" data-log="meetup" aria-live="polite"></div>
+        <div class="results" data-results="meetup"></div>
+      </div>
+    </section>
+
+    <!-- Assistant panel -->
+    <section class="panel" data-panel="assistant">
+      <div class="panel-head">
+        <div>
+          <h2>AI Assistant</h2>
+          <p class="desc">Continuous chat. Live tool-calling (places &amp; events) with the same 4-role inference trace. Try “coffee spots near me” or “plan something with &lt;a connection&gt;”.</p>
+        </div>
+        <div class="actions">
+          <button class="reset-btn" data-reset="assistant">Reset chat</button>
+        </div>
+      </div>
+      <div class="split">
+        <div class="log" data-log="assistant" aria-live="polite"></div>
+        <div class="chat-col">
+          <div class="chat" data-chat="assistant"></div>
+          <form class="chat-input" data-chatform="assistant">
+            <input type="text" data-chatmsg="assistant" placeholder="Ask about places, events, or a meetup…" maxlength="500" />
+            <button type="submit" data-chatsend="assistant">Send</button>
+          </form>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

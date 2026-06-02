@@ -3,6 +3,7 @@ import { supabase as defaultSupabase } from "./supabase.js";
 import { redisGet, redisSet } from "./redis.js";
 import { agentLLMClient } from "./azureClient.js";
 import { searchNearbyPlaces } from "./foursquareClient.js";
+import { midpoint } from "./connectionContext.js";
 import { cellToLatLngSafe } from "../shared/h3.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -36,6 +37,7 @@ export type ConnectionCandidate = {
   nearby: boolean;
   proximityCount: number;
   mutualConnections: number;
+  coords: { lat: number; lng: number } | null;
 };
 
 export type ResearchData = {
@@ -54,6 +56,9 @@ export type ResearchData = {
     address: string;
     types: string[];
     rating: number | null;
+    /** The connection this venue sits roughly halfway to (midpoint-grounded). */
+    nearConnectionId?: string;
+    nearConnectionName?: string;
   }>;
 };
 
@@ -105,6 +110,36 @@ export type SwarmState = {
   updatedAt: string;
   error: string | null;
 };
+
+// ─── Streaming hooks (additive — enables realtime demo surfaces) ──────────────
+//
+// runSwarm accepts an optional emitter + AbortSignal so a UI can observe the
+// swarm as it runs and stop it mid-flight. When omitted, behavior is identical
+// to before (no-op emitter, no abort). Events are plain JSON-serializable
+// objects so they map straight onto SSE frames.
+
+export type SwarmEvent =
+  | { type: "agent_start"; agent: AgentName; phase: SwarmState["phase"]; attempt?: number }
+  | { type: "trace"; entry: AgentTrace }
+  | { type: "phase"; phase: SwarmState["phase"] }
+  | { type: "result"; taskType: TaskType; result: SuggestionOutput | null; approved: boolean; attempts: number; humanApprovalRequired: boolean; feedback: string }
+  | { type: "error"; message: string }
+  | { type: "aborted" };
+
+export type SwarmEmit = (event: SwarmEvent) => void;
+
+export type SwarmHooks = {
+  emit?: SwarmEmit;
+  signal?: AbortSignal;
+};
+
+/** Raised internally when a caller aborts a run via AbortSignal. */
+export class SwarmAbortError extends Error {
+  constructor() {
+    super("swarm_aborted");
+    this.name = "SwarmAbortError";
+  }
+}
 
 // ─── Terminal colors per agent (visual fidelity for demo logs) ────────────────
 
@@ -267,6 +302,7 @@ async function researcherAgent(
         const cInterests = (p.interests as string[] | null) ?? [];
         const sharedInterests = cInterests.filter((i) => myInterests.includes(i));
         const score = sharedInterests.length * 3 + (proxCounts.get(p.id as string) ?? 0) + (p.h3_cell === h3Cell ? 2 : 0);
+        const cH3 = (p.h3_cell as string | null) ?? null;
         return {
           userId: p.id as string,
           firstName: p.first_name as string,
@@ -277,6 +313,7 @@ async function researcherAgent(
           nearby: h3Cell !== null && p.h3_cell === h3Cell,
           proximityCount: proxCounts.get(p.id as string) ?? 0,
           mutualConnections: 0,
+          coords: cH3 ? cellToLatLngSafe(cH3) : null,
           _score: score,
         };
       })
@@ -285,19 +322,51 @@ async function researcherAgent(
       .map(({ _score: _s, ...c }) => c);
   }
 
-  // Nearby venues for meetup tasks
+  // Nearby venues for meetup tasks — grounded on the MIDPOINT between the user
+  // and each top connection, mirroring the assistant's connection-aware planning
+  // (shared `midpoint` helper). This means every meetup suggestion can cite a
+  // venue that actually sits roughly halfway between the two specific people.
   let venues: ResearchData["venues"] = [];
   if (state.taskType === "meetup" && coords && foursquareApiKey) {
+    const query = myInterests.slice(0, 2).join(" ") || "cafe restaurant";
+    // Bound to the top 3 connections to cap Foursquare calls per run.
+    const targets = connections.slice(0, 3);
     try {
-      const query = myInterests.slice(0, 2).join(" ") || "cafe restaurant";
-      const places = await searchNearbyPlaces(foursquareApiKey, coords.lat, coords.lng, query, 5000);
-      venues = places.slice(0, 8).map((p) => ({
-        placeId: p.placeId,
-        name: p.name,
-        address: p.address,
-        types: p.types ?? [],
-        rating: p.rating ?? null,
-      }));
+      const perConnection = await Promise.all(
+        targets.map(async (c) => {
+          const center = midpoint(coords, c.coords);
+          if (!center) return [];
+          const places = await searchNearbyPlaces(foursquareApiKey, center.lat, center.lng, query, 5000);
+          return places.slice(0, 4).map((p) => ({
+            placeId: p.placeId,
+            name: p.name,
+            address: p.address,
+            types: p.types ?? [],
+            rating: p.rating ?? null,
+            nearConnectionId: c.userId,
+            nearConnectionName: c.firstName,
+          }));
+        })
+      );
+      const seen = new Set<string>();
+      for (const list of perConnection) {
+        for (const v of list) {
+          if (seen.has(v.placeId)) continue;
+          seen.add(v.placeId);
+          venues.push(v);
+        }
+      }
+      // Fallback: no connections (or none resolvable) — search around the user.
+      if (venues.length === 0) {
+        const places = await searchNearbyPlaces(foursquareApiKey, coords.lat, coords.lng, query, 5000);
+        venues = places.slice(0, 8).map((p) => ({
+          placeId: p.placeId,
+          name: p.name,
+          address: p.address,
+          types: p.types ?? [],
+          rating: p.rating ?? null,
+        }));
+      }
     } catch {
       agentLog("researcher", "Venue search unavailable, continuing without venues");
     }
@@ -317,8 +386,12 @@ async function researcherAgent(
   };
 
   const ms = Date.now() - t0;
-  agentLog("researcher", `Research complete — ${connections.length} connections, ${venues.length} venues (${ms}ms)`);
-  trace(state, "researcher", "research", `userId=${state.userId}`, `${connections.length} connections, ${venues.length} venues`, ms, "completed");
+  const grounded = venues.some((v) => v.nearConnectionId);
+  agentLog(
+    "researcher",
+    `Research complete — ${connections.length} connections, ${venues.length} venues${grounded ? " (midpoint-grounded)" : ""} (${ms}ms)`
+  );
+  trace(state, "researcher", "research", `userId=${state.userId}`, `${connections.length} connections, ${venues.length} venues${grounded ? " (midpoint-grounded)" : ""}`, ms, "completed");
 }
 
 // ─── Agent: Executor ──────────────────────────────────────────────────────────
@@ -345,6 +418,9 @@ Generate 2–4 personalized meetup suggestions. Each suggestion MUST:
 2. Name ONE specific venue from the venues list (use the exact venue name)
 3. Suggest a specific time (e.g., "This Saturday, 3pm")
 4. Reference shared interests or proximity in the description
+VENUE GROUNDING: each venue has a "nearConnectionId" marking the connection it sits
+roughly halfway to. PREFER a venue whose nearConnectionId matches the suggestion's
+connectionId — that venue is fairly located between the user and that specific person.
 Return ONLY valid JSON:
 {"suggestions":[{"type":"detailed","connectionId":"<userId>","connectionName":"<firstName>","title":"<short title>","place":"<venue name>","time":"<specific time>","text":"<2-3 sentence description>"}]}
 ${priorCritique}${humanNote}`;
@@ -352,7 +428,7 @@ ${priorCritique}${humanNote}`;
     userPromptData = {
       user: { firstName: research.userProfile.firstName, bio: research.userProfile.bio, interests: research.userProfile.interests },
       connections: research.connections.map((c) => ({ userId: c.userId, firstName: c.firstName, sharedInterests: c.sharedInterests, nearby: c.nearby, proximityCount: c.proximityCount })),
-      venues: research.venues.map((v) => ({ name: v.name, address: v.address, types: v.types })),
+      venues: research.venues.map((v) => ({ name: v.name, address: v.address, types: v.types, nearConnectionId: v.nearConnectionId ?? null, nearConnectionName: v.nearConnectionName ?? null })),
     };
   } else {
     systemPrompt = `You are the Executor agent for a privacy-first social platform.
@@ -462,11 +538,26 @@ export type SwarmParams = {
   taskType: TaskType;
   supabase?: typeof defaultSupabase;
   foursquareApiKey: string;
+  /** Optional realtime hooks: stream events and/or abort the run. */
+  hooks?: SwarmHooks;
 };
 
 export async function runSwarm(params: SwarmParams): Promise<SwarmState> {
-  const { userId, taskType, supabase = defaultSupabase, foursquareApiKey } = params;
+  const { userId, taskType, supabase = defaultSupabase, foursquareApiKey, hooks } = params;
   const runId = randomUUID();
+
+  const emit: SwarmEmit = hooks?.emit ?? (() => {});
+  const signal = hooks?.signal;
+  // Forward only trace entries the caller hasn't seen yet.
+  let traceCursor = 0;
+  const flushTraces = (): void => {
+    for (; traceCursor < state.trace.length; traceCursor++) {
+      emit({ type: "trace", entry: state.trace[traceCursor]! });
+    }
+  };
+  const checkAbort = (): void => {
+    if (signal?.aborted) throw new SwarmAbortError();
+  };
 
   const state: SwarmState = {
     runId,
@@ -494,6 +585,8 @@ export async function runSwarm(params: SwarmParams): Promise<SwarmState> {
 
   try {
     // 1. Planner
+    checkAbort();
+    emit({ type: "agent_start", agent: "planner", phase: "planning" });
     const { data: preview } = await supabase
       .from("users")
       .select("first_name, bio, interests")
@@ -506,16 +599,30 @@ export async function runSwarm(params: SwarmParams): Promise<SwarmState> {
       interests: (preview?.interests as string[] | null) ?? [],
     });
     await saveState(state);
+    emit({ type: "phase", phase: state.phase });
+    flushTraces();
 
     // 2. Researcher
+    checkAbort();
+    emit({ type: "agent_start", agent: "researcher", phase: "research" });
     await researcherAgent(state, supabase, foursquareApiKey);
     await saveState(state);
+    emit({ type: "phase", phase: state.phase });
+    flushTraces();
 
     // 3. Executor → Critic adversarial loop
     while (state.attempts < state.maxAttempts) {
+      checkAbort();
+      emit({ type: "agent_start", agent: "executor", phase: "execution", attempt: state.attempts + 1 });
       await executorAgent(state);
+      flushTraces();
+
+      checkAbort();
+      emit({ type: "agent_start", agent: "critic", phase: "critique", attempt: state.attempts });
       await criticAgent(state);
       await saveState(state);
+      emit({ type: "phase", phase: state.phase });
+      flushTraces();
 
       if (state.critiqueResult?.approved) break;
     }
@@ -525,6 +632,16 @@ export async function runSwarm(params: SwarmParams): Promise<SwarmState> {
       state.humanApprovalRequired = true;
       state.phase = "awaiting_human";
       await saveState(state);
+      emit({ type: "phase", phase: state.phase });
+      emit({
+        type: "result",
+        taskType,
+        result: state.executorOutput,
+        approved: false,
+        attempts: state.attempts,
+        humanApprovalRequired: true,
+        feedback: state.critiqueResult?.feedback ?? "",
+      });
       return state;
     }
 
@@ -533,11 +650,30 @@ export async function runSwarm(params: SwarmParams): Promise<SwarmState> {
     state.phase = "complete";
     await saveState(state);
     agentLog("planner", `=== SWARM COMPLETE runId=${runId} ===`);
+    emit({ type: "phase", phase: state.phase });
+    emit({
+      type: "result",
+      taskType,
+      result: state.finalResult,
+      approved: true,
+      attempts: state.attempts,
+      humanApprovalRequired: false,
+      feedback: state.critiqueResult?.feedback ?? "",
+    });
   } catch (err) {
+    if (err instanceof SwarmAbortError) {
+      state.error = "aborted";
+      state.phase = "error";
+      await saveState(state).catch(() => {});
+      agentLog("planner", `=== SWARM ABORTED runId=${runId} ===`);
+      emit({ type: "aborted" });
+      return state;
+    }
     state.error = String(err);
     state.phase = "error";
     await saveState(state);
     agentLog("planner", `=== SWARM ERROR runId=${runId}: ${err} ===`);
+    emit({ type: "error", message: String(err) });
   }
 
   return state;

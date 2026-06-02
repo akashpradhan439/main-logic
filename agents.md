@@ -14,7 +14,7 @@ Helping users plan safe, meaningful in-person meetups with people they've crosse
 |---|---|
 | **Role** | Entry point; decomposes the user request into a structured execution plan |
 | **Goal** | Produce a prioritized TaskPlan with named sub-tasks for Researcher and Executor |
-| **Tooling** | Azure OpenAI (GPT-4o) via `lib/azureClient.ts` |
+| **Tooling** | Azure AI Foundry (Llama-3.3-70B-Instruct) via `lib/azureClient.ts` |
 | **Input** | `taskType` ("meetup" or "connections") + user profile (firstName, bio, interests) |
 | **Output** | `TaskPlan { intent: string, tasks: [{ id, description, priority }] }` |
 | **Handoff** | Passes plan to Researcher via `SwarmState.plan` |
@@ -28,11 +28,12 @@ Helping users plan safe, meaningful in-person meetups with people they've crosse
 |---|---|
 | **Role** | Data gatherer; fetches all real-world signals needed for suggestion generation |
 | **Goal** | Build a complete `ResearchData` bundle from live databases and APIs |
-| **Tooling** | Supabase (user profiles, connections, notifications), Foursquare API (nearby venues), H3 spatial index |
+| **Tooling** | Supabase (user profiles, connections, notifications), Foursquare API (nearby venues), H3 spatial index, shared `midpoint()` helper |
 | **Input** | `SwarmState.userId` + `SwarmState.plan` |
 | **Output** | `ResearchData { userProfile, connections[], venues[] }` |
 | **Handoff** | Passes research bundle to Executor via `SwarmState.research` |
 | **Signals gathered** | Shared interests, proximity count (from notifications table), nearby (same H3 cell), friendship graph |
+| **Midpoint grounding** | Searches venues at the geographic midpoint between the user and each top connection, tagging each venue with `nearConnectionId`. The same `midpoint()` helper powers the conversational assistant — one shared grounding primitive across both AI surfaces. |
 
 ---
 
@@ -42,7 +43,7 @@ Helping users plan safe, meaningful in-person meetups with people they've crosse
 |---|---|
 | **Role** | Suggestion generator; transforms research data into personalized, actionable suggestions |
 | **Goal** | Generate 2–4 specific meetup cards or connection suggestions grounded in real data |
-| **Tooling** | Azure OpenAI (GPT-4o) with structured JSON output |
+| **Tooling** | Azure AI Foundry (Llama-3.3-70B-Instruct) with structured JSON output |
 | **Input** | `SwarmState.research` + optional `critiqueResult.feedback` (on retry) + optional human feedback |
 | **Output** | `SuggestionOutput { meetupSuggestions[] | connectionSuggestions[] }` |
 | **Handoff** | Passes output to Critic via `SwarmState.executorOutput` |
@@ -56,7 +57,7 @@ Helping users plan safe, meaningful in-person meetups with people they've crosse
 |---|---|
 | **Role** | Adversarial validator; tries to find safety, specificity, and relevance flaws |
 | **Goal** | Approve only suggestions that are safe, specific to real data, and meaningfully personalized |
-| **Tooling** | Azure OpenAI (GPT-4o) for evaluation; Azure AI Content Safety (optional, via `AZURE_CONTENT_SAFETY_KEY`) |
+| **Tooling** | Azure AI Foundry (Llama-3.3-70B-Instruct) for evaluation; Azure AI Content Safety (optional, via `AZURE_CONTENT_SAFETY_KEY`) |
 | **Input** | `SwarmState.executorOutput` + `SwarmState.research` (for ground-truth validation) |
 | **Output** | `CritiqueResult { approved: boolean, feedback: string, issues: string[] }` |
 | **Handoff** | If approved → `SwarmState.finalResult`; if rejected → back to Executor with `feedback` |
@@ -70,7 +71,7 @@ Helping users plan safe, meaningful in-person meetups with people they've crosse
 
 2. **Specificity rule** — Every meetup suggestion must name a specific person AND a specific venue. One-sentence generic suggestions ("You two might like coffee") are rejected.
 
-3. **Privacy rule** — No PII (phone numbers, email addresses, last names) leaves the swarm in suggestion output. Only `connectionId` (UUID) references are used.
+3. **Privacy / data-minimization rule** — Only first names, interests, and coarse midpoint location reach the model. No last names, phone numbers, email addresses, or precise GPS ever leave the system. Only **mutually-accepted** connections are resolvable (`findAcceptedConnections`). Suggestion output references connections by `connectionId` (UUID) + first name only.
 
 4. **Safety first** — Critic must reject content that is inappropriate, discriminatory, or unsafe. Azure AI Content Safety is integrated as an optional second check.
 
@@ -103,7 +104,7 @@ SwarmState {
   humanApprovalRequired boolean  — Set when max attempts exceeded
   finalResult    SuggestionOutput — Set when approved
   trace          AgentTrace[]    — Full audit log
-  llmProvider    "azure"|"groq"  — Which LLM backend was used
+  llmProvider    "azure"|"none"  — Which LLM backend was used (Azure AI Foundry)
   createdAt      ISO timestamp
   updatedAt      ISO timestamp
   error          string | null
@@ -130,8 +131,8 @@ Redis key: `swarm:run:{runId}` · TTL: 1800s (30 min)
 
 | Component | Technology |
 |---|---|
-| Orchestration framework | Custom TypeScript agent loop (`lib/agentSwarm.ts`) |
-| LLM | Azure OpenAI (GPT-4o) · Groq (llama-3.3-70b) as fallback |
+| Orchestration framework | Custom TypeScript agent loop (`lib/agentSwarm.ts`), inspired by Semantic Kernel handoff patterns |
+| LLM | Azure AI Foundry — Llama-3.3-70B-Instruct (Azure-only) |
 | State / Blackboard | Redis (Azure Cache for Redis) |
 | Database | Supabase / PostgreSQL |
 | Location signals | Uber H3 spatial indexing |
