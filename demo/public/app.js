@@ -325,7 +325,9 @@ function handleAssistantEvent(m, ctx) {
       break;
     case "reply":
       ctx.typing.classList.remove("typing");
-      ctx.typing.textContent = ctx.replyText || m.text || "(no reply)";
+      // Prefer the server's final (sanitized) text — it removes any runaway
+      // token-loop that may have streamed live.
+      ctx.typing.textContent = m.text || ctx.replyText || "(no reply)";
       renderCardsInChat(m.cards && m.cards.length ? m.cards : ctx.cards);
       break;
     case "error":

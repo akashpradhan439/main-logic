@@ -487,12 +487,15 @@ async function executeToolCall(
         events.length === 0
           ? { message: "No events found." }
           : {
+              // Cap field lengths — scraped date/time strings are sometimes
+              // malformed (e.g. repeated date ranges) and can seed a model
+              // token-loop if passed verbatim.
               events: events.map((e) => ({
-                title: e.title,
-                date: e.date,
-                time: e.time,
-                venue: e.venue,
-                address: e.address,
+                title: cap(e.title, 80),
+                date: cap(e.date, 40),
+                time: cap(e.time, 40),
+                venue: cap(e.venue, 80),
+                address: cap(e.address, 120),
               })),
             };
       return {
@@ -559,6 +562,51 @@ async function executeToolCall(
   }
 }
 
+// Repetition penalties discourage the model from falling into a degenerate
+// token-loop (e.g. "7 7 7 7 …") when tool results contain messy values.
+const REPLY_FREQUENCY_PENALTY = 0.5;
+const REPLY_PRESENCE_PENALTY = 0.3;
+
+/** Truncate a possibly-undefined string to a max length (defensive). */
+function cap(s: string | undefined, n: number): string | undefined {
+  if (typeof s !== "string") return s;
+  const t = s.trim();
+  return t.length > n ? t.slice(0, n) : t;
+}
+
+/** True when the recent output has collapsed into a low-diversity loop. */
+function looksLikeLoop(text: string): boolean {
+  const toks = text.trim().split(/\s+/);
+  if (toks.length < 40) return false;
+  const last = toks.slice(-40);
+  return new Set(last).size <= 3;
+}
+
+/** Collapse runaway repetition and trim a degenerate tail so a looped reply
+ * never reaches the user even if the model misbehaves. */
+function sanitizeReply(text: string): string {
+  if (!text) return text;
+  // Collapse 3+ consecutive repeats of the same short token to one.
+  const words = text.split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  for (let i = 0; i < words.length; ) {
+    out.push(words[i]!);
+    let j = i + 1;
+    while (j < words.length && words[j] === words[i]) j++;
+    i = j - i >= 3 ? j : i + 1;
+  }
+  let cleaned = out.join(" ");
+  // Drop a trailing low-diversity window (e.g. an alternating "7 2026 7 2026" tail).
+  let toks = cleaned.split(/\s+/);
+  while (toks.length > 12) {
+    const w = toks.slice(-30);
+    if (w.length >= 20 && new Set(w).size <= 3) toks = toks.slice(0, -1);
+    else break;
+  }
+  cleaned = toks.join(" ").trim();
+  return cleaned;
+}
+
 async function noToolsCompletion(
   messages: ChatCompletionMessageParam[],
   onToken?: (delta: string) => void
@@ -570,6 +618,8 @@ async function noToolsCompletion(
       model: getAzureDeployment(),
       max_tokens: 1024,
       temperature: 0.6,
+      frequency_penalty: REPLY_FREQUENCY_PENALTY,
+      presence_penalty: REPLY_PRESENCE_PENALTY,
       stream: true,
       messages,
     });
@@ -579,18 +629,21 @@ async function noToolsCompletion(
       if (delta) {
         full += delta;
         try { onToken(delta); } catch { /* ignore emitter errors */ }
+        if (looksLikeLoop(full)) break; // stop a degenerate token-loop early
       }
     }
-    if (full.trim()) return full;
+    if (full.trim()) return sanitizeReply(full);
     // Empty stream — fall through to a non-streamed completion below.
   }
   const c = await client.chat.completions.create({
     model: getAzureDeployment(),
     max_tokens: 1024,
     temperature: 0.6,
+    frequency_penalty: REPLY_FREQUENCY_PENALTY,
+    presence_penalty: REPLY_PRESENCE_PENALTY,
     messages,
   });
-  return c.choices[0]?.message?.content ?? "";
+  return sanitizeReply(c.choices[0]?.message?.content ?? "");
 }
 
 type AssistantToolName = "search_places" | "search_events" | "get_place_details";
@@ -978,34 +1031,44 @@ export async function chatWithAssistant(
       model: deployment,
       max_tokens: 1024,
       temperature: 0.6,
+      frequency_penalty: REPLY_FREQUENCY_PENALTY,
+      presence_penalty: REPLY_PRESENCE_PENALTY,
       stream: true,
       messages: pass2Messages,
     });
     let full = "";
     for await (const chunk of stream) {
       const delta = chunk.choices[0]?.delta?.content ?? "";
-      if (delta) { full += delta; streamToken(delta); }
+      if (delta) {
+        full += delta;
+        streamToken(delta);
+        if (looksLikeLoop(full)) break; // stop a degenerate token-loop early
+      }
     }
     // Guard against an occasional empty stream — fall back to non-streamed.
     if (full.trim()) {
-      reply = full;
+      reply = sanitizeReply(full);
     } else {
       const pass2 = await client.chat.completions.create({
         model: deployment,
         max_tokens: 1024,
         temperature: 0.6,
+        frequency_penalty: REPLY_FREQUENCY_PENALTY,
+        presence_penalty: REPLY_PRESENCE_PENALTY,
         messages: pass2Messages,
       });
-      reply = pass2.choices[0]?.message?.content ?? "";
+      reply = sanitizeReply(pass2.choices[0]?.message?.content ?? "");
     }
   } else {
     const pass2 = await client.chat.completions.create({
       model: deployment,
       max_tokens: 1024,
       temperature: 0.6,
+      frequency_penalty: REPLY_FREQUENCY_PENALTY,
+      presence_penalty: REPLY_PRESENCE_PENALTY,
       messages: pass2Messages,
     });
-    reply = pass2.choices[0]?.message?.content ?? "";
+    reply = sanitizeReply(pass2.choices[0]?.message?.content ?? "");
   }
   onStep({ type: "agent", agent: "critic", message: `Grounded in ${cards.length} live card(s); no fabricated names` });
   return { reply, cards, rememberedConnections: remembered };
