@@ -29,8 +29,8 @@ Single-model AI gives you a confident answer you can't verify, audit, or trust. 
 
 ## Tech at a glance
 - **Azure AI Foundry** — Llama-3.3-70B-Instruct (all 4 agents + assistant; Azure-only)
-- **Azure Cache for Redis** — the swarm "blackboard" (shared `SwarmState`)
-- **Azure AI Content Safety** — Critic safety gate
+- **Upstash (managed Redis)** — the swarm "blackboard" (shared `SwarmState`)
+- **Azure AI Content Safety** — Critic safety gate (activates when configured)
 - Custom TypeScript orchestration (Semantic-Kernel-inspired handoffs) · Fastify 5 · Supabase · Foursquare · Uber H3 · RabbitMQ · fully Dockerized
 
 ## Remaining to-dos before submission
