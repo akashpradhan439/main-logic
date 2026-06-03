@@ -35,7 +35,7 @@ flowchart TD
 
     subgraph INFRA["Infrastructure"]
         DB[(Supabase / PostgreSQL)]
-        REDIS[(Redis Blackboard<br/>Azure Cache for Redis)]
+        REDIS[(Redis Blackboard<br/>Upstash · rediss://)]
         MQ[RabbitMQ Event Bus]
     end
 
@@ -102,7 +102,7 @@ Every Microsoft / external AI service used:
 | Service | Where it's used |
 |---|---|
 | **Azure AI Foundry** — Llama-3.3-70B-Instruct (serverless, OpenAI-compatible) | The reasoning engine for **all four swarm agents** and the conversational assistant (`lib/azureClient.ts`, `lib/aiClient.ts`). Azure-only — there is no Groq fallback. |
-| **Azure Cache for Redis** | The swarm "blackboard" — shared `SwarmState` persistence (`lib/redis.ts`). |
+| Managed Redis (Upstash, `rediss://`) | The swarm "blackboard" — shared `SwarmState` persistence (`lib/redis.ts`). Any managed Redis works. |
 | **Azure AI Content Safety** | Integrated into the Critic agent as a configurable safety gate. |
 | Foursquare Places API | Real venue data for the Researcher (`lib/foursquareClient.ts`). |
 | Uber H3 | Privacy-preserving spatial indexing (coarse hex cells, never raw GPS). |
@@ -232,7 +232,7 @@ docker compose -f docker-compose.prod.yml logs -f --tail=0 api | grep --line-buf
 | API | Fastify 5 + TypeScript (ES2022, strict) |
 | AI Orchestration | Custom agent swarm — `lib/agentSwarm.ts` |
 | LLM | **Azure AI Foundry — Llama-3.3-70B-Instruct** (Azure-only) |
-| State / Blackboard | Redis (Azure Cache for Redis) |
+| State / Blackboard | Managed Redis (Upstash `rediss://`) |
 | Safety | Azure AI Content Safety (Critic gate) |
 | Database | Supabase / PostgreSQL |
 | Cryptography | Noble.js — X25519, Ed25519, ML-KEM-768, AES-256-GCM |

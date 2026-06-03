@@ -5,6 +5,7 @@ import { agentLLMClient } from "./azureClient.js";
 import { searchNearbyPlaces } from "./foursquareClient.js";
 import { midpoint } from "./connectionContext.js";
 import { cellToLatLngSafe } from "../shared/h3.js";
+import { analyzeTextSafety, isContentSafetyConfigured } from "./contentSafety.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -565,6 +566,29 @@ Return ONLY valid JSON: {"approved":true/false,"feedback":"brief explanation","i
   } catch {
     // Fail open: if critic errors, accept the output
     state.critiqueResult = { approved: true, feedback: "Critic unavailable; output accepted.", issues: [] };
+  }
+
+  // Azure AI Content Safety — second, independent safety gate. Only runs when
+  // configured (endpoint + key); otherwise it no-ops. Builds a text blob from
+  // the user-facing suggestion fields and rejects on any flagged harm category.
+  if (isContentSafetyConfigured()) {
+    const safetyText = (suggestions as Array<Record<string, unknown>>)
+      .map((s) => [s.title, s.place, s.text, s.reason].filter((v): v is string => typeof v === "string").join(" . "))
+      .join("\n");
+    const safety = await analyzeTextSafety(safetyText);
+    if (safety.checked) {
+      agentLog(
+        "critic",
+        `Azure AI Content Safety: ${safety.safe ? "passed" : `FLAGGED ${safety.flagged.join(", ")}`} (maxSeverity=${safety.maxSeverity})`
+      );
+      if (!safety.safe && state.critiqueResult.approved) {
+        state.critiqueResult = {
+          approved: false,
+          feedback: `Azure AI Content Safety flagged ${safety.flagged.join(", ")}; regenerate without unsafe content.`,
+          issues: safety.flagged.map((c) => `content_safety_${c.toLowerCase()}`),
+        };
+      }
+    }
   }
 
   const ms = Date.now() - t0;

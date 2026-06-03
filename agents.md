@@ -87,7 +87,7 @@ Helping users plan safe, meaningful in-person meetups with people they've crosse
 
 ## Handoff Protocol
 
-All state is passed via a single `SwarmState` object persisted in Redis (Azure Cache for Redis in production). Each agent reads from and writes to this shared object — the "blackboard."
+All state is passed via a single `SwarmState` object persisted in Redis (Upstash managed Redis via `rediss://`; any managed Redis works). Each agent reads from and writes to this shared object — the "blackboard."
 
 ```
 SwarmState {
@@ -133,7 +133,7 @@ Redis key: `swarm:run:{runId}` · TTL: 1800s (30 min)
 |---|---|
 | Orchestration framework | Custom TypeScript agent loop (`lib/agentSwarm.ts`), inspired by Semantic Kernel handoff patterns |
 | LLM | Azure AI Foundry — Llama-3.3-70B-Instruct (Azure-only) |
-| State / Blackboard | Redis (Azure Cache for Redis) |
+| State / Blackboard | Managed Redis (Upstash `rediss://`) |
 | Database | Supabase / PostgreSQL |
 | Location signals | Uber H3 spatial indexing |
 | Venue data | Foursquare Places API |
