@@ -116,6 +116,15 @@ code { background: #eef2fb; padding: 1px 6px; border-radius: 5px; color: #1d4ed8
 .log-line.system .tag { color: var(--muted); }
 .log-line.running { opacity: .9; }
 .log-line .pill { font-size: 10px; padding: 1px 7px; border-radius: 20px; border: 1px solid currentColor; margin-left: auto; flex-shrink: 0; }
+/* Live raw model output (streamed tokens) */
+.inference { margin: 4px 0 6px; padding: 8px 10px; border-radius: 8px; background: #f3f6fc; border: 1px dashed var(--line); }
+.inference .inf-tag { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
+.inference.planner .inf-tag { color: var(--planner); }
+.inference.researcher .inf-tag { color: var(--researcher); }
+.inference.executor .inf-tag { color: var(--executor); }
+.inference.critic .inf-tag { color: var(--critic); }
+.inference .inf-body { margin-top: 4px; white-space: pre-wrap; word-break: break-word; color: #475569; font: 11.5px/1.5 ui-monospace, Menlo, Consolas, monospace; max-height: 180px; overflow-y: auto; }
+
 .status-banner { padding: 8px 12px; border-radius: 9px; margin: 4px 0 10px; font-size: 13px; font-weight: 600; }
 .status-banner.ok { background: #e7f8f1; color: #047857; border: 1px solid #a7f0d3; }
 .status-banner.err { background: #fdeaea; color: #b91c1c; border: 1px solid #f6c4c4; }

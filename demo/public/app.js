@@ -118,8 +118,26 @@ function runSwarm(tab) {
 function finishSwarm(tab) {
   const st = swarmState[tab];
   if (st && st.es) st.es.close();
-  if (st) st.running = false;
+  if (st) { st.running = false; st.inf = null; }
   setRunning(tab, false);
+}
+
+// Live raw model output: accumulate streamed tokens into one block per agent call.
+function appendInference(tab, agent, delta) {
+  const st = swarmState[tab];
+  if (!st) return;
+  if (!st.inf || st.inf.agent !== agent) {
+    const box = logEl(tab);
+    const wrap = el("div", `inference ${agent}`);
+    wrap.appendChild(el("span", "inf-tag", `🧠 ${AGENT_LABEL[agent] || agent} streaming`));
+    const body = el("div", "inf-body");
+    wrap.appendChild(body);
+    box.appendChild(wrap);
+    st.inf = { agent, body };
+  }
+  st.inf.body.textContent += delta;
+  const box = logEl(tab);
+  box.scrollTop = box.scrollHeight;
 }
 
 function handleSwarmEvent(tab, m) {
@@ -133,6 +151,10 @@ function handleSwarmEvent(tab, m) {
       break;
     case "agent_start":
       logLine(tab, m.agent, `→ ${m.phase}${m.attempt ? ` (attempt ${m.attempt})` : ""}`, { running: true, pill: "running" });
+      if (swarmState[tab]) swarmState[tab].inf = null; // start a fresh inference block
+      break;
+    case "inference":
+      appendInference(tab, m.agent, m.delta);
       break;
     case "trace": {
       const e = m.entry;
@@ -250,9 +272,15 @@ function handleAssistantEvent(m, ctx) {
     case "card":
       ctx.cards.push(m.card);
       break;
+    case "reply_delta":
+      if (!ctx.started) { ctx.typing.classList.remove("typing"); ctx.typing.textContent = ""; ctx.started = true; }
+      ctx.replyText += m.delta;
+      ctx.typing.textContent = ctx.replyText;
+      ctx.typing.parentElement.scrollTop = ctx.typing.parentElement.scrollHeight;
+      break;
     case "reply":
       ctx.typing.classList.remove("typing");
-      ctx.typing.textContent = m.text || "(no reply)";
+      ctx.typing.textContent = ctx.replyText || m.text || "(no reply)";
       renderCardsInChat(m.cards && m.cards.length ? m.cards : ctx.cards);
       break;
     case "error":
@@ -274,7 +302,7 @@ async function sendChat(message) {
   const typing = chatBubble("assistant typing", "thinking…");
   logLine("assistant", "system", `User: ${message}`);
 
-  const ctx = { cards: [], typing, done: false };
+  const ctx = { cards: [], typing, done: false, replyText: "", started: false };
   try {
     const resp = await api("api/assistant/stream", {
       method: "POST",

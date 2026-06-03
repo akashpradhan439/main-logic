@@ -534,6 +534,7 @@ async function handleAssistantStream(res: http.ServerResponse, request: http.Inc
       },
       (step) => {
         if (step.type === "card") sseSend(res, { type: "card", card: step.card });
+        else if (step.type === "token") sseSend(res, { type: "reply_delta", delta: step.delta });
         else sseSend(res, { type: "agent", agent: step.agent, message: step.message });
       }
     );

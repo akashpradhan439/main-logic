@@ -249,8 +249,13 @@ export type AssistantConnectionOptions = {
  */
 export type AssistantStep =
   | { type: "agent"; agent: "planner" | "researcher" | "executor" | "critic"; message: string }
+  | { type: "token"; delta: string }
   | { type: "card"; card: AssistantCard };
 export type AssistantStepEmit = (step: AssistantStep) => void;
+
+/** Sentinel default so we can tell whether a caller actually wants introspection
+ * (and thus live token streaming) vs the production no-op. */
+const NOOP_STEP: AssistantStepEmit = () => {};
 
 const SEARCH_PLACES_TOOL: ChatCompletionTool = {
   type: "function",
@@ -550,9 +555,30 @@ async function executeToolCall(
   }
 }
 
-async function noToolsCompletion(messages: ChatCompletionMessageParam[]): Promise<string> {
+async function noToolsCompletion(
+  messages: ChatCompletionMessageParam[],
+  onToken?: (delta: string) => void
+): Promise<string> {
   const client = getAzureClient();
   if (!client) return "";
+  if (onToken) {
+    const stream = await client.chat.completions.create({
+      model: getAzureDeployment(),
+      max_tokens: 1024,
+      temperature: 0.6,
+      stream: true,
+      messages,
+    });
+    let full = "";
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.content ?? "";
+      if (delta) {
+        full += delta;
+        try { onToken(delta); } catch { /* ignore emitter errors */ }
+      }
+    }
+    return full;
+  }
   const c = await client.chat.completions.create({
     model: getAzureDeployment(),
     max_tokens: 1024,
@@ -652,7 +678,7 @@ export async function chatWithAssistant(
   foursquareApiKey: string,
   tappedPlace: Place | null = null,
   connectionOptions: AssistantConnectionOptions = {},
-  onStep: AssistantStepEmit = () => {}
+  onStep: AssistantStepEmit = NOOP_STEP
 ): Promise<{
   reply: string;
   cards: AssistantCard[];
@@ -666,6 +692,13 @@ export async function chatWithAssistant(
   const client = getAzureClient()!;
   const deployment = getAzureDeployment();
   const systemPrompt = buildAssistantSystemPrompt(userContext);
+
+  // Live token streaming for the user-visible reply — only when a caller actually
+  // wants introspection (demo), so production stays on the non-streaming path.
+  const uiAttached = onStep !== NOOP_STEP;
+  const streamToken: ((delta: string) => void) | undefined = uiAttached
+    ? (delta) => onStep({ type: "token", delta })
+    : undefined;
 
   // Connections carried forward from earlier turns (deduped by userId).
   const remembered: ConnectionContext[] = [];
@@ -700,7 +733,7 @@ export async function chatWithAssistant(
       { role: "user", content: userMessage },
     ];
 
-    const reply = await noToolsCompletion(tapMessages);
+    const reply = await noToolsCompletion(tapMessages, streamToken);
     onStep({ type: "card", card: { type: "place_detail", data: tappedPlace } });
     return {
       reply,
@@ -748,7 +781,7 @@ export async function chatWithAssistant(
         { role: "user", content: userMessage },
       ];
       onStep({ type: "agent", agent: "executor", message: "Composing clarifying question" });
-      const reply = await noToolsCompletion(chooserMessages);
+      const reply = await noToolsCompletion(chooserMessages, streamToken);
       const chooserCard: AssistantCard = {
         type: "connections",
         data: matches.map((m) => ({ userId: m.userId, name: m.name, interests: m.interests })),
@@ -819,7 +852,7 @@ export async function chatWithAssistant(
   // mention), answer directly.
   if (!selectedTool) {
     onStep({ type: "agent", agent: "executor", message: "No live data needed — replying directly" });
-    const reply = await noToolsCompletion(pass1Messages);
+    const reply = await noToolsCompletion(pass1Messages, streamToken);
     return { reply, cards: [], rememberedConnections: remembered };
   }
 
@@ -878,14 +911,30 @@ export async function chatWithAssistant(
     ...fanOut.map((r) => r.toolMessage),
   ];
 
-  const pass2 = await client.chat.completions.create({
-    model: deployment,
-    max_tokens: 1024,
-    temperature: 0.6,
-    messages: pass2Messages,
-  });
-
-  const reply = pass2.choices[0]?.message?.content ?? "";
+  let reply: string;
+  if (streamToken) {
+    const stream = await client.chat.completions.create({
+      model: deployment,
+      max_tokens: 1024,
+      temperature: 0.6,
+      stream: true,
+      messages: pass2Messages,
+    });
+    let full = "";
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.content ?? "";
+      if (delta) { full += delta; streamToken(delta); }
+    }
+    reply = full;
+  } else {
+    const pass2 = await client.chat.completions.create({
+      model: deployment,
+      max_tokens: 1024,
+      temperature: 0.6,
+      messages: pass2Messages,
+    });
+    reply = pass2.choices[0]?.message?.content ?? "";
+  }
   onStep({ type: "agent", agent: "critic", message: `Grounded in ${cards.length} live card(s); no fabricated names` });
   return { reply, cards, rememberedConnections: remembered };
 }

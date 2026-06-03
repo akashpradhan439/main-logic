@@ -120,6 +120,7 @@ export type SwarmState = {
 
 export type SwarmEvent =
   | { type: "agent_start"; agent: AgentName; phase: SwarmState["phase"]; attempt?: number }
+  | { type: "inference"; agent: AgentName; delta: string }
   | { type: "trace"; entry: AgentTrace }
   | { type: "phase"; phase: SwarmState["phase"] }
   | { type: "result"; taskType: TaskType; result: SuggestionOutput | null; approved: boolean; attempts: number; humanApprovalRequired: boolean; feedback: string }
@@ -192,8 +193,18 @@ function trace(
 
 // ─── LLM helper ───────────────────────────────────────────────────────────────
 
-async function llm(systemPrompt: string, userPrompt: string, maxTokens = 2048): Promise<unknown> {
-  const text = await agentLLMClient.complete({ systemPrompt, userPrompt, maxTokens });
+async function llm(
+  systemPrompt: string,
+  userPrompt: string,
+  maxTokens = 2048,
+  onToken?: (delta: string) => void
+): Promise<unknown> {
+  const text = await agentLLMClient.complete({
+    systemPrompt,
+    userPrompt,
+    maxTokens,
+    ...(onToken ? { onToken } : {}),
+  });
   return JSON.parse(text);
 }
 
@@ -201,7 +212,8 @@ async function llm(systemPrompt: string, userPrompt: string, maxTokens = 2048): 
 
 async function plannerAgent(
   state: SwarmState,
-  userProfile: { firstName: string; bio: string | null; interests: string[] }
+  userProfile: { firstName: string; bio: string | null; interests: string[] },
+  onToken?: (delta: string) => void
 ): Promise<void> {
   const t0 = Date.now();
   agentLog("planner", `Decomposing task: ${state.taskType} for ${userProfile.firstName}`);
@@ -214,7 +226,7 @@ Return ONLY valid JSON: { "intent": "string", "tasks": [{ "id": "string", "descr
   const usr = JSON.stringify({ taskType: state.taskType, user: userProfile });
 
   try {
-    const parsed = await llm(sys, usr, 512) as { intent?: string; tasks?: unknown[] };
+    const parsed = await llm(sys, usr, 512, onToken) as { intent?: string; tasks?: unknown[] };
     state.plan = {
       intent: typeof parsed.intent === "string" ? parsed.intent : `Plan ${state.taskType}`,
       tasks: (Array.isArray(parsed.tasks) ? parsed.tasks : []).map((t) => {
@@ -396,7 +408,11 @@ async function researcherAgent(
 
 // ─── Agent: Executor ──────────────────────────────────────────────────────────
 
-async function executorAgent(state: SwarmState, humanFeedback?: string): Promise<void> {
+async function executorAgent(
+  state: SwarmState,
+  humanFeedback?: string,
+  onToken?: (delta: string) => void
+): Promise<void> {
   const t0 = Date.now();
   state.attempts += 1;
   agentLog("executor", `Generating suggestions (attempt ${state.attempts}/${state.maxAttempts})`);
@@ -443,7 +459,7 @@ ${priorCritique}${humanNote}`;
     };
   }
 
-  const parsed = await llm(systemPrompt, JSON.stringify(userPromptData)) as { suggestions?: unknown[] };
+  const parsed = await llm(systemPrompt, JSON.stringify(userPromptData), 2048, onToken) as { suggestions?: unknown[] };
   const suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : [];
 
   if (state.taskType === "meetup") {
@@ -476,7 +492,7 @@ ${priorCritique}${humanNote}`;
 
 // ─── Agent: Critic ────────────────────────────────────────────────────────────
 
-async function criticAgent(state: SwarmState): Promise<void> {
+async function criticAgent(state: SwarmState, onToken?: (delta: string) => void): Promise<void> {
   const t0 = Date.now();
   agentLog("critic", `Validating output (attempt ${state.attempts}/${state.maxAttempts})`);
   state.phase = "critique";
@@ -510,7 +526,7 @@ Return ONLY valid JSON: {"approved":true/false,"feedback":"brief explanation","i
   });
 
   try {
-    const parsed = await llm(sys, usr, 512) as { approved?: boolean; feedback?: string; issues?: unknown[] };
+    const parsed = await llm(sys, usr, 512, onToken) as { approved?: boolean; feedback?: string; issues?: unknown[] };
     state.critiqueResult = {
       approved: parsed.approved === true,
       feedback: typeof parsed.feedback === "string" ? parsed.feedback : "",
@@ -558,6 +574,10 @@ export async function runSwarm(params: SwarmParams): Promise<SwarmState> {
   const checkAbort = (): void => {
     if (signal?.aborted) throw new SwarmAbortError();
   };
+  // Live token streaming only when a UI is attached — keeps non-UI (prod) callers
+  // on the original non-streaming code path.
+  const mkToken = (agent: AgentName): ((delta: string) => void) | undefined =>
+    hooks?.emit ? (delta) => emit({ type: "inference", agent, delta }) : undefined;
 
   const state: SwarmState = {
     runId,
@@ -597,7 +617,7 @@ export async function runSwarm(params: SwarmParams): Promise<SwarmState> {
       firstName: (preview?.first_name as string) ?? "User",
       bio: (preview?.bio as string | null) ?? null,
       interests: (preview?.interests as string[] | null) ?? [],
-    });
+    }, mkToken("planner"));
     await saveState(state);
     emit({ type: "phase", phase: state.phase });
     flushTraces();
@@ -614,12 +634,12 @@ export async function runSwarm(params: SwarmParams): Promise<SwarmState> {
     while (state.attempts < state.maxAttempts) {
       checkAbort();
       emit({ type: "agent_start", agent: "executor", phase: "execution", attempt: state.attempts + 1 });
-      await executorAgent(state);
+      await executorAgent(state, undefined, mkToken("executor"));
       flushTraces();
 
       checkAbort();
       emit({ type: "agent_start", agent: "critic", phase: "critique", attempt: state.attempts });
-      await criticAgent(state);
+      await criticAgent(state, mkToken("critic"));
       await saveState(state);
       emit({ type: "phase", phase: state.phase });
       flushTraces();

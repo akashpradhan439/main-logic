@@ -6,6 +6,10 @@ export type LLMCompletionParams = {
   userPrompt: string;
   maxTokens?: number;
   temperature?: number;
+  /** When provided, the completion is streamed and each token delta is emitted
+   * live as it arrives. The full text is still accumulated and returned, so
+   * callers that JSON.parse the result are unaffected. */
+  onToken?: (delta: string) => void;
 };
 
 export type LLMClient = {
@@ -49,16 +53,44 @@ function createAzureLLMClient(): LLMClient | null {
   if (!client) return null;
   return {
     provider: "azure",
-    async complete({ systemPrompt, userPrompt, maxTokens = 2048, temperature = 0.5 }) {
+    async complete({ systemPrompt, userPrompt, maxTokens = 2048, temperature = 0.5, onToken }) {
+      const messages = [
+        { role: "system" as const, content: systemPrompt },
+        { role: "user" as const, content: userPrompt },
+      ];
+
+      // Streaming path: surface live token deltas while accumulating the full
+      // text (so JSON.parse on the result still works).
+      if (onToken) {
+        const stream = await client.chat.completions.create({
+          model: config.azureOpenAIDeployment,
+          max_tokens: maxTokens,
+          temperature,
+          response_format: { type: "json_object" },
+          stream: true,
+          messages,
+        });
+        let full = "";
+        for await (const chunk of stream) {
+          const delta = chunk.choices[0]?.delta?.content ?? "";
+          if (delta) {
+            full += delta;
+            try {
+              onToken(delta);
+            } catch {
+              /* never let a UI emitter break inference */
+            }
+          }
+        }
+        return full || "{}";
+      }
+
       const result = await client.chat.completions.create({
         model: config.azureOpenAIDeployment,
         max_tokens: maxTokens,
         temperature,
         response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
+        messages,
       });
       return result.choices[0]?.message?.content ?? "{}";
     },
