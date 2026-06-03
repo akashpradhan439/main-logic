@@ -11,6 +11,8 @@ import {
 import { getPlaceDetails, type Place } from "../lib/foursquareClient.js";
 import {
   findAcceptedConnections,
+  findNearbyPeople,
+  findNearbyPersonContext,
   type ConnectionContext,
 } from "../lib/connectionContext.js";
 import { config } from "../config.js";
@@ -23,6 +25,7 @@ const ChatSchema = z
     message: z.string().min(1).max(500),
     placeId: z.string().min(1).max(120).optional(),
     connectionUserId: z.string().uuid().optional(),
+    personUserId: z.string().uuid().optional(),
   })
   .strict();
 
@@ -129,6 +132,7 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
         const message = parsed.data.message.trim();
         const tappedPlaceId = parsed.data.placeId;
         const chosenConnectionUserId = parsed.data.connectionUserId;
+        const chosenPersonUserId = parsed.data.personUserId;
 
         const { data: me, error: meErr } = await supabase
           .from("users")
@@ -234,6 +238,20 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
           }
         }
 
+        // Nearby-people card tap: the user picked someone the assistant surfaced
+        // via "who's around me". Resolve (re-verifying they're genuinely nearby)
+        // and make them the active planning context so the next turn can build a
+        // meetup around them.
+        if (chosenPersonUserId) {
+          const chosenPerson = await findNearbyPersonContext(supabase, userId, chosenPersonUserId);
+          if (chosenPerson) {
+            seededRemembered = [
+              ...seededRemembered.filter((c) => c.userId !== chosenPerson.userId),
+              chosenPerson,
+            ];
+          }
+        }
+
         const { reply: aiReply, cards, rememberedConnections } = await chatWithAssistant(
           history,
           message,
@@ -243,6 +261,7 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
           {
             rememberedConnections: seededRemembered,
             resolveConnections: (ref) => findAcceptedConnections(supabase, userId, ref),
+            findNearbyPeople: () => findNearbyPeople(supabase, userId),
           }
         );
 

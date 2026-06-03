@@ -142,6 +142,22 @@ code { background: #eef2fb; padding: 1px 6px; border-radius: 5px; color: #1d4ed8
 .tagrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .tagrow span { font-size: 11px; color: var(--accent); border: 1px solid var(--line); padding: 2px 8px; border-radius: 20px; }
 
+.person { margin: 6px 0; }
+.person-pick, .pick-btn {
+  display: block; width: 100%; text-align: left; background: #fff; border: 1px solid var(--line);
+  color: var(--text); border-radius: 8px; padding: 8px 12px; cursor: pointer;
+  font-size: 13px; margin-top: 6px; transition: border-color .15s, color .15s, background .15s;
+}
+.person-pick:hover, .pick-btn:hover { border-color: var(--accent); color: var(--accent); background: #f5f8ff; }
+
+/* Language selector */
+.lang-wrap { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); }
+.lang-select {
+  background: #fff; border: 1px solid var(--line); color: var(--text);
+  border-radius: 8px; padding: 6px 8px; font-size: 13px; cursor: pointer; outline: none;
+}
+.lang-select:focus { border-color: var(--accent); }
+
 /* ─── Chat ──────────────────────────────────────────────────────────────── */
 .chat-col { display: flex; flex-direction: column; gap: 10px; }
 .chat {

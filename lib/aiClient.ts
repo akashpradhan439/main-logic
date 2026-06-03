@@ -11,7 +11,7 @@ import {
   type Place,
 } from "./foursquareClient.js";
 import { scrapeGoogleEvents, type EventResult } from "./eventsScraper.js";
-import { midpoint, type ConnectionContext } from "./connectionContext.js";
+import { midpoint, type ConnectionContext, type NearbyPerson } from "./connectionContext.js";
 
 export type SuggestionCandidate = {
   userId: string;
@@ -221,7 +221,8 @@ export type AssistantCard =
   | { type: "places"; data: Place[] }
   | { type: "events"; data: EventResult[] }
   | { type: "place_detail"; data: Place }
-  | { type: "connections"; data: ConnectionMatch[] };
+  | { type: "connections"; data: ConnectionMatch[] }
+  | { type: "people"; data: NearbyPerson[] };
 
 /** A function the route injects to resolve a mentioned connection (bound to
  * supabase + the requesting user id). Keeps aiClient free of Supabase. */
@@ -235,6 +236,9 @@ export type AssistantConnectionOptions = {
   rememberedConnections?: ConnectionContext[];
   /** Resolver for connections newly named in this turn. */
   resolveConnections?: ConnectionResolver;
+  /** Discover up to 10 people around the user with shared interests (bound to
+   * supabase + the requesting user id). Keeps aiClient free of Supabase. */
+  findNearbyPeople?: () => Promise<NearbyPerson[]>;
 };
 
 /**
@@ -577,7 +581,8 @@ async function noToolsCompletion(
         try { onToken(delta); } catch { /* ignore emitter errors */ }
       }
     }
-    return full;
+    if (full.trim()) return full;
+    // Empty stream — fall through to a non-streamed completion below.
   }
   const c = await client.chat.completions.create({
     model: getAzureDeployment(),
@@ -598,6 +603,7 @@ const ASSISTANT_TOOLS_BY_NAME: Record<AssistantToolName, ChatCompletionTool> = {
 
 type TurnClassification = {
   tool: AssistantToolName | null;
+  findPeople: boolean;
   connection: { mentioned: boolean; name: string | null; userId: string | null };
 };
 
@@ -618,6 +624,7 @@ async function classifyTurn(
 ): Promise<TurnClassification> {
   const empty: TurnClassification = {
     tool: null,
+    findPeople: false,
     connection: { mentioned: false, name: null, userId: null },
   };
   const recent = history
@@ -626,12 +633,15 @@ async function classifyTurn(
     .join("\n");
   const system =
     `Classify the user's latest message for a local-guide assistant.\n` +
-    `Return ONLY JSON: {"tool":"search_places"|"search_events"|"get_place_details"|"none","connection":{"mentioned":boolean,"name":string|null,"userId":string|null}}.\n` +
+    `Return ONLY JSON: {"tool":"search_places"|"search_events"|"get_place_details"|"none","findPeople":boolean,"connection":{"mentioned":boolean,"name":string|null,"userId":string|null}}.\n` +
     `tool:\n` +
     `- search_places: they want somewhere to go, eat, drink, or visit (cafes, restaurants, parks, bars, gyms, attractions).\n` +
     `- search_events: they ask about events, concerts, festivals, gigs, or what's happening on a date.\n` +
     `- get_place_details: they ask for more detail about one specific place already mentioned.\n` +
     `- none: greetings, small talk, general advice, or anything not needing live place/event data.\n` +
+    `findPeople: set true when the user wants to DISCOVER people around them or with similar interests ` +
+    `(e.g. "who's around me", "who has similar interests like me", "find people near me", "anyone nearby into hiking"). ` +
+    `This is about meeting NEW people, not an existing friend. When findPeople is true, set tool to "none".\n` +
     `connection: set mentioned=true when the user refers to a specific friend/connection they want to involve in plans (e.g. "meet John", "plan with Sarah", "somewhere near Alex"). ` +
     `Put the person's name in "name" (else null) and any UUID present in "userId" (else null). ` +
     `Do NOT treat place names, cities, or venues as connections.`;
@@ -650,22 +660,28 @@ async function classifyTurn(
     });
     const parsed = JSON.parse(c.choices[0]?.message?.content ?? "{}") as {
       tool?: unknown;
+      findPeople?: unknown;
       connection?: { mentioned?: unknown; name?: unknown; userId?: unknown };
     };
+    const findPeople = parsed.findPeople === true;
     const t = parsed.tool;
-    const tool: AssistantToolName | null =
-      t === "search_places" || t === "search_events" || t === "get_place_details" ? t : null;
+    // Discovery short-circuits any place/event tool for this turn.
+    const tool: AssistantToolName | null = findPeople
+      ? null
+      : t === "search_places" || t === "search_events" || t === "get_place_details"
+        ? t
+        : null;
     const conn = parsed.connection ?? {};
     const name = typeof conn.name === "string" && conn.name.trim() ? conn.name.trim() : null;
     const userId =
       (typeof conn.userId === "string" && UUID_RE.test(conn.userId) ? conn.userId : null) ??
       uuidInMessage;
     const mentioned = conn.mentioned === true || name !== null || userId !== null;
-    return { tool, connection: { mentioned, name, userId } };
+    return { tool, findPeople, connection: { mentioned, name, userId } };
   } catch {
     // Even on classifier failure, honor a raw UUID in the message.
     if (uuidInMessage) {
-      return { tool: null, connection: { mentioned: true, name: null, userId: uuidInMessage } };
+      return { tool: null, findPeople: false, connection: { mentioned: true, name: null, userId: uuidInMessage } };
     }
     return empty;
   }
@@ -744,7 +760,7 @@ export async function chatWithAssistant(
 
   // Classify intent + extract any named connection in a single JSON pass.
   onStep({ type: "agent", agent: "planner", message: "Classifying intent (tool + connection)…" });
-  const { tool: selectedTool, connection } = await classifyTurn(
+  const { tool: selectedTool, findPeople, connection } = await classifyTurn(
     client,
     deployment,
     userMessage,
@@ -753,8 +769,53 @@ export async function chatWithAssistant(
   onStep({
     type: "agent",
     agent: "planner",
-    message: `Intent → tool=${selectedTool ?? "none"}${connection.mentioned ? `, connection=${connection.name ?? connection.userId ?? "mentioned"}` : ""}`,
+    message: `Intent → tool=${selectedTool ?? "none"}${findPeople ? ", findPeople=true" : ""}${connection.mentioned ? `, connection=${connection.name ?? connection.userId ?? "mentioned"}` : ""}`,
   });
+
+  // "Who's around me / with similar interests" discovery short-circuit. Fetches
+  // up to 10 nearby people via the injected resolver, surfaces a chooser card,
+  // and invites the user to pick one to plan around. Handled here (not as an
+  // OpenAI tool) so aiClient stays Supabase-free and we avoid the deployment's
+  // one-tool-per-request limit.
+  if (findPeople && connectionOptions.findNearbyPeople) {
+    onStep({ type: "agent", agent: "researcher", message: "Searching for nearby people with shared interests…" });
+    let people: NearbyPerson[] = [];
+    try {
+      people = (await connectionOptions.findNearbyPeople()).slice(0, 10);
+    } catch {
+      people = [];
+    }
+    onStep({ type: "agent", agent: "researcher", message: `Found ${people.length} nearby person(s)` });
+
+    const peopleSystem =
+      people.length === 0
+        ? `No people are around the user right now. Gently let them know nobody nearby matched yet and suggest they check back later or widen their interests. Do not invent any names.`
+        : `The user asked who is around them. Here is the discovery result (already fetched — do NOT call any tool):\n` +
+          JSON.stringify({
+            people: people.map((p) => ({
+              name: p.name,
+              sharedInterests: p.sharedInterests,
+              nearby: p.isNearby,
+            })),
+          }) +
+          `\nWrite a warm 2-4 sentence reply that lists these people by name, mentioning a shared interest where there is one. ` +
+          `End by inviting the user to pick someone (e.g. tap a name) so you can help plan a meetup. ` +
+          `Use ONLY the names provided — never invent people, and do not reveal any IDs.`;
+
+    const peopleMessages: ChatCompletionMessageParam[] = [
+      { role: "system", content: systemPrompt },
+      { role: "system", content: peopleSystem },
+      ...history.map((h) => ({ role: h.role, content: h.content })),
+      { role: "user", content: userMessage },
+    ];
+    onStep({ type: "agent", agent: "executor", message: "Composing the nearby-people list" });
+    const reply = await noToolsCompletion(peopleMessages, streamToken);
+
+    const cards: AssistantCard[] = people.length > 0 ? [{ type: "people", data: people }] : [];
+    for (const card of cards) onStep({ type: "card", card });
+    onStep({ type: "agent", agent: "critic", message: `Grounded in ${people.length} discovered profile(s); no fabricated names` });
+    return { reply, cards, rememberedConnections: remembered };
+  }
 
   // Resolve a newly named connection against the user's accepted connections.
   const connNotes: string[] = [];
@@ -925,7 +986,18 @@ export async function chatWithAssistant(
       const delta = chunk.choices[0]?.delta?.content ?? "";
       if (delta) { full += delta; streamToken(delta); }
     }
-    reply = full;
+    // Guard against an occasional empty stream — fall back to non-streamed.
+    if (full.trim()) {
+      reply = full;
+    } else {
+      const pass2 = await client.chat.completions.create({
+        model: deployment,
+        max_tokens: 1024,
+        temperature: 0.6,
+        messages: pass2Messages,
+      });
+      reply = pass2.choices[0]?.message?.content ?? "";
+    }
   } else {
     const pass2 = await client.chat.completions.create({
       model: deployment,

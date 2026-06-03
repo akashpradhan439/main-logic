@@ -69,7 +69,10 @@ type Libs = {
   SwarmAbortError: typeof import("../lib/agentSwarm.js").SwarmAbortError;
   chatWithAssistant: typeof import("../lib/aiClient.js").chatWithAssistant;
   findAcceptedConnections: typeof import("../lib/connectionContext.js").findAcceptedConnections;
+  findNearbyPeople: typeof import("../lib/connectionContext.js").findNearbyPeople;
+  findNearbyPersonContext: typeof import("../lib/connectionContext.js").findNearbyPersonContext;
   searchNearbyPlaces: typeof import("../lib/foursquareClient.js").searchNearbyPlaces;
+  getPlaceDetails: typeof import("../lib/foursquareClient.js").getPlaceDetails;
   supabase: typeof import("../lib/supabase.js").supabase;
   config: typeof import("../config.js").config;
   cellToLatLngSafe: typeof import("../shared/h3.js").cellToLatLngSafe;
@@ -94,7 +97,10 @@ async function loadLibs(): Promise<Libs> {
     SwarmAbortError: swarm.SwarmAbortError,
     chatWithAssistant: ai.chatWithAssistant,
     findAcceptedConnections: conn.findAcceptedConnections,
+    findNearbyPeople: conn.findNearbyPeople,
+    findNearbyPersonContext: conn.findNearbyPersonContext,
     searchNearbyPlaces: fsq.searchNearbyPlaces,
+    getPlaceDetails: fsq.getPlaceDetails,
     supabase: sb.supabase,
     config: cfg.config,
     cellToLatLngSafe: h3.cellToLatLngSafe,
@@ -242,127 +248,142 @@ function sseSend(res: http.ServerResponse, obj: unknown): void {
   if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`);
 }
 
-// ─── Demo user selection (server-side; never leaves first name) ───────────────
+// ─── Fixed demo identities ────────────────────────────────────────────────────
+//
+// The demo runs AS a fixed "from" user and plans toward a fixed "to" connection.
+// Selecting Hindi switches the "from" user to a Hindi-preference account so the
+// assistant + suggestions respond in Hindi (the swarm/assistant read the user's
+// own language_preference). All overridable via env.
 
 type DemoUser = {
   id: string;
   firstName: string;
+  fullName: string;
   bio: string | null;
   interests: string[];
   coords: { lat: number; lng: number } | null;
+  language: string;
+  withName: string | null; // the "to" connection shown in the UI
 };
-let cachedDemoUser: DemoUser | null = null;
 
 type UserRow = {
   id: string;
   first_name: string | null;
+  last_name: string | null;
   bio: string | null;
   interests: string[] | null;
   h3_cell: string | null;
+  language_preference: string | null;
 };
 
-function toDemoUser(u: UserRow, cellToLatLngSafe: Libs["cellToLatLngSafe"]): DemoUser {
+const USER_SELECT = "id, first_name, last_name, bio, interests, h3_cell, language_preference";
+
+export const DEMO_LANGUAGES = [
+  { code: "en", label: "English" },
+  { code: "hi", label: "हिन्दी (Hindi)" },
+];
+
+function fullNameOf(u: UserRow): string {
+  return [u.first_name, u.last_name].filter((s) => s && s.trim()).join(" ").trim() || "there";
+}
+
+function toDemoUser(u: UserRow, withName: string | null, cellToLatLngSafe: Libs["cellToLatLngSafe"]): DemoUser {
   return {
     id: u.id,
     firstName: (u.first_name ?? "there").trim() || "there",
+    fullName: fullNameOf(u),
     bio: u.bio ?? null,
     interests: Array.isArray(u.interests) ? u.interests : [],
     coords: u.h3_cell ? cellToLatLngSafe(u.h3_cell) : null,
+    language: (u.language_preference ?? "en") || "en",
+    withName,
   };
 }
 
-async function getDemoUser(): Promise<DemoUser> {
-  if (cachedDemoUser) return cachedDemoUser;
-  const { supabase, cellToLatLngSafe, searchNearbyPlaces, config } = await loadLibs();
+async function resolveUserByName(supabase: Libs["supabase"], fullName: string): Promise<UserRow | null> {
+  const parts = fullName.trim().split(/\s+/);
+  let q = supabase.from("users").select(USER_SELECT).ilike("first_name", parts[0] ?? "");
+  if (parts.length > 1) q = q.ilike("last_name", parts.slice(1).join(" "));
+  const { data } = await q.limit(1);
+  return ((data ?? []) as UserRow[])[0] ?? null;
+}
 
-  // Explicit pin always wins.
-  const pinnedId = process.env.DEMO_USER_ID;
-  if (pinnedId) {
-    const { data } = await supabase
-      .from("users")
-      .select("id, first_name, bio, interests, h3_cell")
-      .eq("id", pinnedId)
-      .limit(1);
-    const row = ((data ?? []) as UserRow[])[0];
-    if (row) {
-      cachedDemoUser = toDemoUser(row, cellToLatLngSafe);
-      console.log(`  Demo user pinned via DEMO_USER_ID → ${cachedDemoUser.firstName}`);
-      return cachedDemoUser;
-    }
-    console.warn("  DEMO_USER_ID set but not found; falling back to auto-select.");
+/** Pick the language-preference user whose location has the densest Foursquare
+ * coverage (so meetup planning has venues to ground on). */
+async function pickDensestByLanguage(lang: string): Promise<UserRow | null> {
+  const { supabase, searchNearbyPlaces, cellToLatLngSafe, config } = await loadLibs();
+  const { data } = await supabase.from("users").select(USER_SELECT).eq("language_preference", lang).limit(40);
+  const rows = ((data ?? []) as UserRow[]).filter((u) => u.h3_cell);
+  if (rows.length === 0) return ((data ?? []) as UserRow[])[0] ?? null;
+  if (!config.foursquareApiKey) return rows[0] ?? null;
+  let best: { u: UserRow; venues: number } | null = null;
+  await Promise.all(
+    rows.slice(0, 8).map(async (u) => {
+      const coords = cellToLatLngSafe(u.h3_cell!);
+      if (!coords) return;
+      try {
+        const places = await searchNearbyPlaces(config.foursquareApiKey, coords.lat, coords.lng, "restaurant", 8000);
+        if (!best || places.length > best.venues) best = { u, venues: places.length };
+      } catch {
+        /* ignore */
+      }
+    })
+  );
+  return (best as { u: UserRow } | null)?.u ?? rows[0] ?? null;
+}
+
+// Fixed "from" identities per language. English → Akash Pradhan (planning toward
+// Geeta Pradhan); Hindi → a Hindi-preference account.
+const FROM_NAME_EN = process.env.DEMO_FROM_NAME || "Akash Pradhan";
+const TO_NAME_EN = process.env.DEMO_TO_NAME || "Geeta Pradhan";
+const FROM_NAME_HI = process.env.DEMO_FROM_HI_NAME || ""; // empty → auto-pick densest hi user
+
+const fromUserCache = new Map<string, DemoUser>();
+
+async function getDemoUser(lang = "en"): Promise<DemoUser> {
+  const code = lang === "hi" ? "hi" : "en";
+  const cached = fromUserCache.get(code);
+  if (cached) return cached;
+  const { supabase, cellToLatLngSafe } = await loadLibs();
+
+  let row: UserRow | null = null;
+  let withName: string | null = null;
+
+  if (code === "en") {
+    row = await resolveUserByName(supabase, FROM_NAME_EN);
+    withName = TO_NAME_EN;
+  } else {
+    if (FROM_NAME_HI) row = await resolveUserByName(supabase, FROM_NAME_HI);
+    if (!row) row = await pickDensestByLanguage("hi");
+    // The "to" for a Hindi run is the from-user's top accepted connection.
+    if (row) withName = await topConnectionName(supabase, row.id);
   }
 
+  if (!row) {
+    const { data } = await supabase.from("users").select(USER_SELECT).limit(1);
+    row = ((data ?? []) as UserRow[])[0] ?? null;
+  }
+  if (!row) throw new Error("No demo user available in Supabase");
+
+  const user = toDemoUser(row, withName, cellToLatLngSafe);
+  fromUserCache.set(code, user);
+  console.log(`  Demo from-user [${code}] → ${user.fullName} (lang=${user.language}${user.withName ? `, to=${user.withName}` : ""})`);
+  return user;
+}
+
+async function topConnectionName(supabase: Libs["supabase"], userId: string): Promise<string | null> {
   const { data: conns } = await supabase
     .from("connections")
     .select("requester_id, addressee_id")
-    .eq("status", "accepted");
-
-  const degree = new Map<string, number>();
-  for (const c of (conns ?? []) as Array<{ requester_id: string; addressee_id: string }>) {
-    for (const id of [c.requester_id, c.addressee_id]) degree.set(id, (degree.get(id) ?? 0) + 1);
-  }
-
-  const ids = [...degree.keys()];
-  let scored: UserRow[] = [];
-  if (ids.length > 0) {
-    const { data: users } = await supabase
-      .from("users")
-      .select("id, first_name, bio, interests, h3_cell")
-      .in("id", ids);
-    scored = ((users ?? []) as UserRow[])
-      .map((u) => ({
-        u,
-        score:
-          (degree.get(u.id) ?? 0) * 10 +
-          ((u.interests ?? []).length > 0 ? 5 : 0) +
-          (u.h3_cell ? 3 : 0),
-      }))
-      .sort((a, b) => b.score - a.score)
-      .map((s) => s.u);
-  }
-
-  // Prefer the well-connected user whose location has the DENSEST venue
-  // coverage, so the meetup swarm (which searches midpoints between the user and
-  // each connection) has real venues to ground on. Resolution-4 H3 centroids can
-  // land in venue-sparse areas, so we probe Foursquare for the top candidates
-  // (cheap, one-time, cached) and pick the maximum-coverage one.
-  let chosen: UserRow | null = scored[0] ?? null;
-  if (config.foursquareApiKey && scored.length > 0) {
-    let best: { u: UserRow; venues: number } | null = null;
-    await Promise.all(
-      scored.slice(0, 12).map(async (u) => {
-        if (!u.h3_cell) return;
-        const coords = cellToLatLngSafe(u.h3_cell);
-        if (!coords) return;
-        try {
-          const places = await searchNearbyPlaces(config.foursquareApiKey, coords.lat, coords.lng, "restaurant", 8000);
-          if (!best || places.length > best.venues) best = { u, venues: places.length };
-        } catch {
-          /* ignore probe failure */
-        }
-      })
-    );
-    if (best && (best as { venues: number }).venues > 0) {
-      chosen = (best as { u: UserRow }).u;
-      console.log(
-        `  Demo user auto-selected by venue density → ${((best as { u: UserRow }).u.first_name ?? "user").trim()} (${(best as { venues: number }).venues} nearby venues)`
-      );
-    } else {
-      console.warn("  No connected user has Foursquare venue coverage; meetup suggestions may be sparse.");
-    }
-  }
-
-  if (!chosen) {
-    const { data: anyUsers } = await supabase
-      .from("users")
-      .select("id, first_name, bio, interests, h3_cell")
-      .limit(1);
-    chosen = ((anyUsers ?? []) as UserRow[])[0] ?? null;
-  }
-  if (!chosen) throw new Error("No demo user available in Supabase");
-
-  cachedDemoUser = toDemoUser(chosen, cellToLatLngSafe);
-  return cachedDemoUser;
+    .eq("status", "accepted")
+    .or(`requester_id.eq.${userId},addressee_id.eq.${userId}`)
+    .limit(1);
+  const row = (conns ?? [])[0] as { requester_id: string; addressee_id: string } | undefined;
+  if (!row) return null;
+  const partnerId = row.requester_id === userId ? row.addressee_id : row.requester_id;
+  const { data: u } = await supabase.from("users").select("first_name, last_name").eq("id", partnerId).limit(1);
+  const p = ((u ?? []) as Array<{ first_name: string | null; last_name: string | null }>)[0];
+  return p ? [p.first_name, p.last_name].filter(Boolean).join(" ").trim() || null : null;
 }
 
 // ─── Active runs (for explicit Stop) ──────────────────────────────────────────
@@ -408,13 +429,26 @@ async function handleLogin(req: http.ServerResponse, request: http.IncomingMessa
   return sendJson(req, 200, { success: true, token: signSession(), expiresInMs: SESSION_TTL_MS });
 }
 
-async function handleSession(res: http.ServerResponse): Promise<void> {
+function langOf(req: http.IncomingMessage): string {
+  const url = new URL(req.url || "/", "http://localhost");
+  return url.searchParams.get("lang") === "hi" ? "hi" : "en";
+}
+
+async function handleSession(res: http.ServerResponse, request: http.IncomingMessage): Promise<void> {
   try {
     const { agentLLMClient, config } = await loadLibs();
-    const user = await getDemoUser();
+    const user = await getDemoUser(langOf(request));
     sendJson(res, 200, {
       success: true,
-      user: { firstName: user.firstName, interestCount: user.interests.length, hasLocation: !!user.coords },
+      user: {
+        firstName: user.firstName,
+        fullName: user.fullName,
+        toName: user.withName,
+        language: user.language,
+        interestCount: user.interests.length,
+        hasLocation: !!user.coords,
+      },
+      languages: DEMO_LANGUAGES,
       provider: agentLLMClient.provider,
       deployment: config.azureOpenAIDeployment,
     });
@@ -442,11 +476,11 @@ async function handleSwarmStream(
   sseSend(res, { type: "run_started", streamId, taskType });
 
   try {
-    const user = await getDemoUser();
+    const user = await getDemoUser(langOf(request));
     sseSend(res, {
       type: "agent",
       agent: "planner",
-      message: `Demo user "${user.firstName}" · LLM provider=${agentLLMClient.provider} (${config.azureOpenAIDeployment})`,
+      message: `From "${user.fullName}"${user.withName ? ` → planning toward ${user.withName}` : ""} · lang=${user.language} · provider=${agentLLMClient.provider} (${config.azureOpenAIDeployment})`,
     });
     await runSwarm({
       userId: user.id,
@@ -486,7 +520,16 @@ async function handleStop(res: http.ServerResponse, request: http.IncomingMessag
 }
 
 async function handleAssistantStream(res: http.ServerResponse, request: http.IncomingMessage): Promise<void> {
-  const { chatWithAssistant, findAcceptedConnections, supabase, config, agentLLMClient } = await loadLibs();
+  const {
+    chatWithAssistant,
+    findAcceptedConnections,
+    findNearbyPeople,
+    findNearbyPersonContext,
+    getPlaceDetails,
+    supabase,
+    config,
+    agentLLMClient,
+  } = await loadLibs();
   let body: Record<string, unknown>;
   try {
     body = await readJsonBody(request);
@@ -497,6 +540,13 @@ async function handleAssistantStream(res: http.ServerResponse, request: http.Inc
   if (!message || message.length > 500) {
     return sendJson(res, 400, { success: false, error: "invalid_message" });
   }
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const personUserId =
+    typeof body.personUserId === "string" && UUID_RE.test(body.personUserId) ? body.personUserId : null;
+  const connectionUserId =
+    typeof body.connectionUserId === "string" && UUID_RE.test(body.connectionUserId) ? body.connectionUserId : null;
+  const placeId = typeof body.placeId === "string" && body.placeId.length <= 120 ? body.placeId : null;
+  const lang = body.lang === "hi" ? "hi" : "en";
   const token = bearer(request)!; // guaranteed by auth gate
   const session = sessionFor(token);
 
@@ -506,31 +556,61 @@ async function handleAssistantStream(res: http.ServerResponse, request: http.Inc
   });
 
   try {
-    const user = await getDemoUser();
+    const user = await getDemoUser(lang);
     sseSend(res, { type: "user_echo", text: message });
     sseSend(res, {
       type: "agent",
       agent: "planner",
-      message: `Assistant turn · provider=${agentLLMClient.provider} (${config.azureOpenAIDeployment})`,
+      message: `Assistant turn · from ${user.fullName} · lang=${user.language} · provider=${agentLLMClient.provider} (${config.azureOpenAIDeployment})`,
     });
 
     const userContext = {
       firstName: user.firstName,
       bio: user.bio,
       interests: user.interests,
-      language: "en",
+      language: user.language,
       coords: user.coords,
     };
+
+    // Place-card tap: load the place detail so the assistant gives a focused,
+    // grounded reply about THAT place (conversation progresses).
+    let tappedPlace: Awaited<ReturnType<typeof getPlaceDetails>> = null;
+    if (placeId) {
+      tappedPlace = await getPlaceDetails(config.foursquareApiKey, placeId);
+    }
+
+    // Nearby-people / connection card taps: lock the picked person in as the
+    // active planning context for this and following turns.
+    let seededRemembered = session.remembered as never[];
+    if (personUserId) {
+      const chosen = await findNearbyPersonContext(supabase, user.id, personUserId);
+      if (chosen) {
+        seededRemembered = [
+          ...(seededRemembered as { userId: string }[]).filter((c) => c.userId !== chosen.userId),
+          chosen,
+        ] as never[];
+      }
+    }
+    if (connectionUserId) {
+      const [chosen] = await findAcceptedConnections(supabase, user.id, { userId: connectionUserId });
+      if (chosen) {
+        seededRemembered = [
+          ...(seededRemembered as { userId: string }[]).filter((c) => c.userId !== chosen.userId),
+          chosen,
+        ] as never[];
+      }
+    }
 
     const { reply, cards, rememberedConnections } = await chatWithAssistant(
       session.history,
       message,
       userContext,
       config.foursquareApiKey,
-      null,
+      tappedPlace,
       {
-        rememberedConnections: session.remembered as never,
+        rememberedConnections: seededRemembered,
         resolveConnections: (ref) => findAcceptedConnections(supabase, user.id, ref),
+        findNearbyPeople: () => findNearbyPeople(supabase, user.id),
       },
       (step) => {
         if (step.type === "card") sseSend(res, { type: "card", card: step.card });
@@ -613,7 +693,7 @@ const server = http.createServer(async (req, res) => {
       if (!isAuthed(req)) {
         return sendJson(res, 401, { success: false, error: "unauthorized" });
       }
-      if (pathname === "/api/session" && method === "GET") return await handleSession(res);
+      if (pathname === "/api/session" && method === "GET") return await handleSession(res, req);
       if (pathname === "/api/swarm/connections/stream" && method === "GET")
         return await handleSwarmStream(res, req, "connections");
       if (pathname === "/api/swarm/meetup/stream" && method === "GET")

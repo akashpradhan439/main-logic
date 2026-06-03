@@ -8,6 +8,7 @@ const TOKEN_KEY = "lokaal_demo_token";
 const AGENT_LABEL = { planner: "PLANNER", researcher: "RESEARCHER", executor: "EXECUTOR", critic: "CRITIC", system: "SYSTEM" };
 
 let token = sessionStorage.getItem(TOKEN_KEY) || "";
+let currentLang = sessionStorage.getItem("lokaal_demo_lang") || "en";
 
 // ─── tiny DOM helpers ─────────────────────────────────────────────────────────
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -38,21 +39,38 @@ async function initSession() {
     return;
   }
   try {
-    const resp = await api("api/session");
+    const resp = await api(`api/session?lang=${encodeURIComponent(currentLang)}`);
     if (resp.status === 401) {
       goToLogin();
       return;
     }
     const data = await resp.json();
     const u = data.user || {};
+    const flow = u.toName ? `${u.fullName || u.firstName} → ${u.toName}` : (u.fullName || u.firstName || "user");
     $("#session-info").textContent =
-      `as ${u.firstName || "user"} · ${data.provider}/${data.deployment}` + (u.hasLocation ? " · 📍" : "");
+      `${flow} · ${u.language || currentLang} · ${data.provider}/${data.deployment}` + (u.hasLocation ? " · 📍" : "");
   } catch (e) {
     $("#session-info").textContent = "session error";
   }
 }
 
 $("#logout").addEventListener("click", goToLogin);
+
+// ─── Language selector ────────────────────────────────────────────────────────
+const langSelect = $("#lang-select");
+if (langSelect) {
+  langSelect.value = currentLang;
+  langSelect.addEventListener("change", async () => {
+    currentLang = langSelect.value === "hi" ? "hi" : "en";
+    sessionStorage.setItem("lokaal_demo_lang", currentLang);
+    // Switching the "from" user invalidates the chat context — reset it.
+    try { await api("api/assistant/reset", { method: "POST" }); } catch (e) {}
+    $(`.chat[data-chat="assistant"]`).innerHTML = "";
+    logEl("assistant").innerHTML = "";
+    ["connections", "meetup"].forEach((t) => clearTab(t));
+    await initSession();
+  });
+}
 
 // ─── Tabs ───────────────────────────────────────────────────────────────────
 $$(".tab").forEach((tab) => {
@@ -98,7 +116,7 @@ function runSwarm(tab) {
   setRunning(tab, true);
   logLine(tab, "system", "Opening swarm stream…");
 
-  const url = `api/swarm/${tab}/stream?token=${encodeURIComponent(token)}`;
+  const url = `api/swarm/${tab}/stream?token=${encodeURIComponent(token)}&lang=${encodeURIComponent(currentLang)}`;
   const es = new EventSource(url);
   swarmState[tab] = { es, streamId: null, running: true };
 
@@ -246,8 +264,15 @@ function renderCardsInChat(cards) {
 function renderAssistantCard(c) {
   const card = el("div", "card");
   if (c.type === "places") {
-    card.appendChild(el("h3", null, `📍 ${c.data.length} place(s)`));
-    c.data.slice(0, 5).forEach((p) => card.appendChild(el("p", "meta", `${p.name}${p.rating ? " ★" + p.rating : ""} — ${p.address || ""}`)));
+    card.appendChild(el("h3", null, `📍 ${c.data.length} place(s) — tap one to continue`));
+    c.data.slice(0, 6).forEach((p) => {
+      const btn = el("button", "pick-btn", `${p.name}${p.rating ? " ★" + p.rating : ""}${p.address ? " — " + p.address : ""}`);
+      btn.addEventListener("click", () => {
+        if (assistantBusy) return;
+        sendChat(`Tell me more about ${p.name}.`, { placeId: p.placeId });
+      });
+      card.appendChild(btn);
+    });
   } else if (c.type === "events") {
     card.appendChild(el("h3", null, `🎫 ${c.data.length} event(s)`));
     c.data.slice(0, 5).forEach((e) => card.appendChild(el("p", "meta", `${e.title}${e.date ? " · " + e.date : ""}${e.venue ? " @ " + e.venue : ""}`)));
@@ -256,10 +281,30 @@ function renderAssistantCard(c) {
     card.appendChild(el("h3", null, p.name));
     card.appendChild(el("p", "meta", `${p.rating ? "★" + p.rating + " · " : ""}${p.address || ""}`));
   } else if (c.type === "connections") {
-    card.appendChild(el("h3", null, "Which connection?"));
-    const row = el("div", "tagrow");
-    c.data.forEach((m) => row.appendChild(el("span", null, m.name)));
-    card.appendChild(row);
+    card.appendChild(el("h3", null, "Which connection? Tap to plan with them"));
+    c.data.forEach((m) => {
+      const shared = (m.interests || []).slice(0, 3).join(", ");
+      const btn = el("button", "pick-btn", `${m.name}${shared ? " · " + shared : ""}`);
+      btn.addEventListener("click", () => {
+        if (assistantBusy) return;
+        sendChat(`Let's plan something with ${m.name}.`, { connectionUserId: m.userId });
+      });
+      card.appendChild(btn);
+    });
+  } else if (c.type === "people") {
+    card.appendChild(el("h3", null, `👥 ${c.data.length} person(s) around you`));
+    c.data.forEach((p) => {
+      const row = el("div", "person");
+      const shared = (p.sharedInterests || []).slice(0, 3).join(", ");
+      const btn = el("button", "person-pick", `${p.name}${shared ? " · " + shared : ""}`);
+      btn.addEventListener("click", () => {
+        if (assistantBusy) return;
+        sendChat(`Let's plan something with ${p.name}.`, { personUserId: p.userId });
+      });
+      row.appendChild(btn);
+      card.appendChild(row);
+    });
+    card.appendChild(el("p", "muted", "Tap someone to plan a meetup."));
   }
   return card;
 }
@@ -294,7 +339,7 @@ function handleAssistantEvent(m, ctx) {
   }
 }
 
-async function sendChat(message) {
+async function sendChat(message, extra) {
   if (assistantBusy || !message) return;
   assistantBusy = true;
   $(`[data-chatsend="assistant"]`).disabled = true;
@@ -307,7 +352,7 @@ async function sendChat(message) {
     const resp = await api("api/assistant/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, lang: currentLang, ...(extra || {}) }),
     });
     if (resp.status === 401) { goToLogin(); return; }
     if (!resp.ok || !resp.body) {

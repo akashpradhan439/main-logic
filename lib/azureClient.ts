@@ -60,7 +60,9 @@ function createAzureLLMClient(): LLMClient | null {
       ];
 
       // Streaming path: surface live token deltas while accumulating the full
-      // text (so JSON.parse on the result still works).
+      // text (so JSON.parse on the result still works). If the stream yields
+      // nothing (an occasional Foundry hiccup), fall through to a normal
+      // (non-streamed) completion so callers never get empty output.
       if (onToken) {
         const stream = await client.chat.completions.create({
           model: config.azureOpenAIDeployment,
@@ -82,7 +84,8 @@ function createAzureLLMClient(): LLMClient | null {
             }
           }
         }
-        return full || "{}";
+        if (full.trim()) return full;
+        // else: empty stream — fall through to the non-streaming call below.
       }
 
       const result = await client.chat.completions.create({

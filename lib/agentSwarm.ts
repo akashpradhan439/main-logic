@@ -152,6 +152,15 @@ const COLORS: Record<AgentName, string> = {
 };
 const RESET = "\x1b[0m";
 
+// Language labels for multilingual suggestion output (the from-user's preference).
+const LANG_LABELS: Record<string, string> = {
+  hi: "Hindi", bn: "Bangla (Bengali)", es: "Spanish", fr: "French", ar: "Arabic",
+  ja: "Japanese", pt: "Portuguese", ru: "Russian", "zh-Hans": "Simplified Chinese", "zh-Hant": "Traditional Chinese",
+};
+function swarmLanguageLabel(code: string | null | undefined): string {
+  return code ? (LANG_LABELS[code] ?? "English") : "English";
+}
+
 function agentLog(agent: AgentName, msg: string): void {
   console.log(`${COLORS[agent]}[${agent.toUpperCase()}]${RESET} ${msg}`);
 }
@@ -340,7 +349,11 @@ async function researcherAgent(
   // venue that actually sits roughly halfway between the two specific people.
   let venues: ResearchData["venues"] = [];
   if (state.taskType === "meetup" && coords && foursquareApiKey) {
-    const query = myInterests.slice(0, 2).join(" ") || "cafe restaurant";
+    // An interest-derived query can be too niche for Foursquare (0 hits), which
+    // would starve the Executor and force the Critic to reject every attempt.
+    // So we always fall back to a generic, high-coverage venue query.
+    const interestQuery = myInterests.slice(0, 2).join(" ").trim();
+    const GENERIC_QUERY = "restaurant cafe coffee";
     // Bound to the top 3 connections to cap Foursquare calls per run.
     const targets = connections.slice(0, 3);
     try {
@@ -348,7 +361,12 @@ async function researcherAgent(
         targets.map(async (c) => {
           const center = midpoint(coords, c.coords);
           if (!center) return [];
-          const places = await searchNearbyPlaces(foursquareApiKey, center.lat, center.lng, query, 5000);
+          let places = interestQuery
+            ? await searchNearbyPlaces(foursquareApiKey, center.lat, center.lng, interestQuery, 6000)
+            : [];
+          if (places.length === 0) {
+            places = await searchNearbyPlaces(foursquareApiKey, center.lat, center.lng, GENERIC_QUERY, 6000);
+          }
           return places.slice(0, 4).map((p) => ({
             placeId: p.placeId,
             name: p.name,
@@ -368,9 +386,15 @@ async function researcherAgent(
           venues.push(v);
         }
       }
-      // Fallback: no connections (or none resolvable) — search around the user.
+      // Fallback: no connections (or none resolvable / no midpoint venues) —
+      // search around the user with the interest query then a generic one.
       if (venues.length === 0) {
-        const places = await searchNearbyPlaces(foursquareApiKey, coords.lat, coords.lng, query, 5000);
+        let places = interestQuery
+          ? await searchNearbyPlaces(foursquareApiKey, coords.lat, coords.lng, interestQuery, 8000)
+          : [];
+        if (places.length === 0) {
+          places = await searchNearbyPlaces(foursquareApiKey, coords.lat, coords.lng, GENERIC_QUERY, 8000);
+        }
         venues = places.slice(0, 8).map((p) => ({
           placeId: p.placeId,
           name: p.name,
@@ -457,6 +481,12 @@ ${priorCritique}${humanNote}`;
       user: { bio: research.userProfile.bio, interests: research.userProfile.interests },
       candidates: research.connections.map((c) => ({ userId: c.userId, firstName: c.firstName, sharedInterests: c.sharedInterests, nearby: c.nearby, proximityCount: c.proximityCount })),
     };
+  }
+
+  // Multilingual: write user-facing text in the from-user's preferred language.
+  const lang = research.userProfile.language;
+  if (lang && lang !== "en") {
+    systemPrompt += `\nLANGUAGE: Write every human-readable text field (title, time, text, reason) in ${swarmLanguageLabel(lang)}. Keep venue names, JSON keys, userId values, and "type" unchanged.`;
   }
 
   const parsed = await llm(systemPrompt, JSON.stringify(userPromptData), 2048, onToken) as { suggestions?: unknown[] };

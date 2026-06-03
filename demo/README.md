@@ -31,6 +31,16 @@ Each agent has a fixed color: **Planner** cyan · **Researcher** amber ·
 workflow panel. The two swarm features have a **Stop** button that aborts the
 run mid-flight.
 
+### Live model inference
+
+Beyond the step log, the demo streams the **raw token output of the Azure AI
+Foundry model (Llama-3.3-70B-Instruct)** as it generates — each swarm agent
+shows a live "🧠 streaming" block of the actual model output, and the assistant
+types its reply token-by-token. This uses Azure's streaming completions
+(`stream: true`); the full text is still accumulated so the swarm's JSON parsing
+is unaffected. Streaming is enabled only for the demo surface — production code
+paths remain non-streaming.
+
 ## Security model
 
 > The demo credential is intentionally visible in client JS (a shared demo
