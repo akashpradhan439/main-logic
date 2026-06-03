@@ -657,6 +657,8 @@ const ASSISTANT_TOOLS_BY_NAME: Record<AssistantToolName, ChatCompletionTool> = {
 type TurnClassification = {
   tool: AssistantToolName | null;
   findPeople: boolean;
+  /** When the user wants nearby people filtered by a name fragment. */
+  peopleNameFilter: string | null;
   connection: { mentioned: boolean; name: string | null; userId: string | null };
 };
 
@@ -678,6 +680,7 @@ async function classifyTurn(
   const empty: TurnClassification = {
     tool: null,
     findPeople: false,
+    peopleNameFilter: null,
     connection: { mentioned: false, name: null, userId: null },
   };
   const recent = history
@@ -686,7 +689,7 @@ async function classifyTurn(
     .join("\n");
   const system =
     `Classify the user's latest message for a local-guide assistant.\n` +
-    `Return ONLY JSON: {"tool":"search_places"|"search_events"|"get_place_details"|"none","findPeople":boolean,"connection":{"mentioned":boolean,"name":string|null,"userId":string|null}}.\n` +
+    `Return ONLY JSON: {"tool":"search_places"|"search_events"|"get_place_details"|"none","findPeople":boolean,"peopleNameFilter":string|null,"connection":{"mentioned":boolean,"name":string|null,"userId":string|null}}.\n` +
     `tool:\n` +
     `- search_places: they want somewhere to go, eat, drink, or visit (cafes, restaurants, parks, bars, gyms, attractions).\n` +
     `- search_events: they ask about events, concerts, festivals, gigs, or what's happening on a date.\n` +
@@ -695,6 +698,7 @@ async function classifyTurn(
     `findPeople: set true when the user wants to DISCOVER people around them or with similar interests ` +
     `(e.g. "who's around me", "who has similar interests like me", "find people near me", "anyone nearby into hiking"). ` +
     `This is about meeting NEW people, not an existing friend. When findPeople is true, set tool to "none".\n` +
+    `peopleNameFilter: when findPeople is true AND the user is asking specifically for nearby people whose NAME matches something (e.g. "people with Ram in their name", "anyone called Priya nearby", "is there a Ravi around me"), put just that name fragment here (e.g. "Ram"); otherwise null.\n` +
     `connection: set mentioned=true when the user refers to a specific friend/connection they want to involve in plans (e.g. "meet John", "plan with Sarah", "somewhere near Alex"). ` +
     `Put the person's name in "name" (else null) and any UUID present in "userId" (else null). ` +
     `Do NOT treat place names, cities, or venues as connections.`;
@@ -714,9 +718,14 @@ async function classifyTurn(
     const parsed = JSON.parse(c.choices[0]?.message?.content ?? "{}") as {
       tool?: unknown;
       findPeople?: unknown;
+      peopleNameFilter?: unknown;
       connection?: { mentioned?: unknown; name?: unknown; userId?: unknown };
     };
     const findPeople = parsed.findPeople === true;
+    const peopleNameFilter =
+      typeof parsed.peopleNameFilter === "string" && parsed.peopleNameFilter.trim()
+        ? parsed.peopleNameFilter.trim()
+        : null;
     const t = parsed.tool;
     // Discovery short-circuits any place/event tool for this turn.
     const tool: AssistantToolName | null = findPeople
@@ -730,11 +739,11 @@ async function classifyTurn(
       (typeof conn.userId === "string" && UUID_RE.test(conn.userId) ? conn.userId : null) ??
       uuidInMessage;
     const mentioned = conn.mentioned === true || name !== null || userId !== null;
-    return { tool, findPeople, connection: { mentioned, name, userId } };
+    return { tool, findPeople, peopleNameFilter, connection: { mentioned, name, userId } };
   } catch {
     // Even on classifier failure, honor a raw UUID in the message.
     if (uuidInMessage) {
-      return { tool: null, findPeople: false, connection: { mentioned: true, name: null, userId: uuidInMessage } };
+      return { tool: null, findPeople: false, peopleNameFilter: null, connection: { mentioned: true, name: null, userId: uuidInMessage } };
     }
     return empty;
   }
@@ -813,7 +822,7 @@ export async function chatWithAssistant(
 
   // Classify intent + extract any named connection in a single JSON pass.
   onStep({ type: "agent", agent: "planner", message: "Classifying intent (tool + connection)…" });
-  const { tool: selectedTool, findPeople, connection } = await classifyTurn(
+  const { tool: selectedTool, findPeople, peopleNameFilter, connection } = await classifyTurn(
     client,
     deployment,
     userMessage,
@@ -831,29 +840,51 @@ export async function chatWithAssistant(
   // OpenAI tool) so aiClient stays Supabase-free and we avoid the deployment's
   // one-tool-per-request limit.
   if (findPeople && connectionOptions.findNearbyPeople) {
-    onStep({ type: "agent", agent: "researcher", message: "Searching for nearby people with shared interests…" });
+    const filterNote = peopleNameFilter ? ` matching "${peopleNameFilter}"` : "";
+    onStep({ type: "agent", agent: "researcher", message: `Searching for nearby people${filterNote || " with shared interests"}…` });
     let people: NearbyPerson[] = [];
     try {
       people = (await connectionOptions.findNearbyPeople()).slice(0, 10);
     } catch {
       people = [];
     }
-    onStep({ type: "agent", agent: "researcher", message: `Found ${people.length} nearby person(s)` });
 
-    const peopleSystem =
-      people.length === 0
-        ? `No people are around the user right now. Gently let them know nobody nearby matched yet and suggest they check back later or widen their interests. Do not invent any names.`
-        : `The user asked who is around them. Here is the discovery result (already fetched — do NOT call any tool):\n` +
-          JSON.stringify({
-            people: people.map((p) => ({
-              name: p.name,
-              sharedInterests: p.sharedInterests,
-              nearby: p.isNearby,
-            })),
-          }) +
-          `\nWrite a warm 2-4 sentence reply that lists these people by name, mentioning a shared interest where there is one. ` +
-          `End by inviting the user to pick someone (e.g. tap a name) so you can help plan a meetup. ` +
-          `Use ONLY the names provided — never invent people, and do not reveal any IDs.`;
+    // Name filter: if the user asked for people whose name matches, narrow the
+    // discovered set. This keeps the reply truthful instead of dumping unrelated
+    // people when the user asked for a specific name.
+    const discovered = people;
+    if (peopleNameFilter) {
+      const needle = peopleNameFilter.toLowerCase();
+      people = people.filter((p) => p.name.toLowerCase().includes(needle));
+    }
+    onStep({
+      type: "agent",
+      agent: "researcher",
+      message: peopleNameFilter
+        ? `${people.length} of ${discovered.length} nearby match "${peopleNameFilter}"`
+        : `Found ${people.length} nearby person(s)`,
+    });
+
+    let peopleSystem: string;
+    if (people.length > 0) {
+      peopleSystem =
+        `The user asked to find people around them${peopleNameFilter ? ` whose name matches "${peopleNameFilter}"` : ""}. ` +
+        `Here is the result (already fetched — do NOT call any tool):\n` +
+        JSON.stringify({ people: people.map((p) => ({ name: p.name, sharedInterests: p.sharedInterests, nearby: p.isNearby })) }) +
+        `\nWrite a warm 2-4 sentence reply that lists these people by name, mentioning a shared interest where there is one. ` +
+        `End by inviting the user to pick someone (tap a name) so you can help plan a meetup. ` +
+        `Use ONLY the names provided — never invent people, never claim a name matches if it doesn't, and do not reveal any IDs.`;
+    } else if (peopleNameFilter) {
+      // Asked for a specific name, none nearby matched — be clear, don't dump others.
+      peopleSystem =
+        `The user asked for nearby people whose name matches "${peopleNameFilter}", but NONE of the people around them match that name. ` +
+        `Tell them plainly that you couldn't find anyone named "${peopleNameFilter}" nearby right now. ` +
+        `${discovered.length > 0 ? `You may offer that there are ${discovered.length} other people nearby they could discover if they'd like. ` : ""}` +
+        `Do NOT list names, and do NOT invent anyone.`;
+    } else {
+      peopleSystem =
+        `No people are around the user right now. Gently let them know nobody nearby matched yet and suggest they check back later or widen their interests. Do not invent any names.`;
+    }
 
     const peopleMessages: ChatCompletionMessageParam[] = [
       { role: "system", content: systemPrompt },
@@ -864,6 +895,7 @@ export async function chatWithAssistant(
     onStep({ type: "agent", agent: "executor", message: "Composing the nearby-people list" });
     const reply = await noToolsCompletion(peopleMessages, streamToken);
 
+    // Only surface the (clickable) people card when there is something to show.
     const cards: AssistantCard[] = people.length > 0 ? [{ type: "people", data: people }] : [];
     for (const card of cards) onStep({ type: "card", card });
     onStep({ type: "agent", agent: "critic", message: `Grounded in ${people.length} discovered profile(s); no fabricated names` });
