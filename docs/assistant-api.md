@@ -174,7 +174,7 @@ type NearbyPerson = {
 | `link`    | string \| null | no       | Ticket/info URL.                                            |
 | `source`  | string \| null | no       | Source label (e.g. `"BookMyShow"`, `"Insider"`).            |
 | `price`   | string \| null | no       | Free-form price string (e.g. `"From ₹500"`).                |
-| `imageUrl`| string \| null | no       | Event poster/thumbnail URL, scraped from the source. Often absent. |
+| `imageUrl`| string \| null | no       | Event poster/thumbnail URL scraped from the Google Events result — typically a Google-hosted thumbnail (`https://encrypted-tbn*.gstatic.com/images?...`). **Usually present**, but may be `null` when the event card had no image or the scrape was blocked. Treat as hotlinkable but ephemeral; cache the bytes, not the URL. |
 
 > Optional string fields may be absent OR explicitly `null`. Render them only when present and non-empty.
 
@@ -199,7 +199,13 @@ Content-Type: application/json
   message: string,            // 1-500 chars, trimmed server-side
   placeId?: string,           // 1-120 chars; pass when the user taps a Place card
   connectionUserId?: string,  // UUID; pass when the user taps a connections chooser card
-  personUserId?: string       // UUID; pass when the user taps a people (nearby) chooser card
+  personUserId?: string,      // UUID; pass when the user taps a people (nearby) chooser card
+  suggestion?: {              // pass when the user taps "Plan it" on a meet-up suggestion
+    connectionId: string,     // UUID; the suggestion's connection (echoed from the suggestion)
+    title?: string,           // 1-120 chars; the suggestion title
+    place?: string,           // 1-160 chars; the suggested spot (free text, not a placeId)
+    time?: string             // 1-80 chars; the suggested time (free text)
+  }
 }
 ```
 
@@ -213,6 +219,7 @@ Content-Type: application/json
 | `placeId` | string | no       | Foursquare `placeId` from a previously-returned card. **Pass this whenever the user taps a card** — the server short-circuits the LLM tool path, fetches the detail synchronously, and always returns a `place_detail` card with a focused reply. |
 | `connectionUserId` | string (UUID) | no | A `userId` from a `connections` chooser card. **Pass this when the user taps a connection** to lock it in as the active planning companion. Resend the original intent in `message` (e.g. "find a cafe to meet them"). |
 | `personUserId` | string (UUID) | no | A `userId` from a `people` chooser card. **Pass this when the user taps a discovered nearby person** to lock them in as the active planning companion. The server re-verifies they are genuinely nearby before accepting. Resend the original intent in `message` (e.g. "find a cafe to meet them"). |
+| `suggestion` | object | no | The tapped meet-up suggestion. **Pass this when the user taps "Plan it" on a suggestion card** to open the assistant grounded in that idea. `suggestion.connectionId` is treated exactly like `connectionUserId` (locks in that connection — must be one of the user's accepted connections, re-verified server-side). `title`/`place`/`time` are echoed from the suggestion and seed the opening reply. `place` is a venue name, **not** a `placeId` — the server resolves it to the **exact** Foursquare place and returns a `place_detail` card (falling back to a `places` search only if it can't be resolved). See [Planning from a meet-up suggestion](#planning-from-a-meet-up-suggestion). |
 
 #### Example A — free-text turn (no tap)
 
@@ -320,7 +327,8 @@ Content-Type: application/json
           "address": null,
           "link": null,
           "source": null,
-          "price": null
+          "price": null,
+          "imageUrl": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRbMu3OgBNm-6aX36ZkVH5WzMZwuQ1jZyrPKutXp-mhajVOM6Ons2oir1g&s"
         },
         {
           "title": "Fresh India Show 2026",
@@ -330,7 +338,8 @@ Content-Type: application/json
           "address": null,
           "link": null,
           "source": null,
-          "price": null
+          "price": null,
+          "imageUrl": null
         }
       ]
     }
@@ -403,7 +412,7 @@ Returned when Zod validation fails. `error` is a field-map.
 }
 ```
 
-Possible field keys: `message`, `placeId`, `connectionUserId`, `personUserId`. Show field-specific errors next to your inputs.
+Possible field keys: `message`, `placeId`, `connectionUserId`, `personUserId`, `suggestion`. Show field-specific errors next to your inputs.
 
 #### 401 Unauthorized — missing/invalid JWT
 
@@ -465,6 +474,147 @@ connected to** who are physically nearby.
 - **Privacy:** a user can only plan around someone the assistant actually
   surfaced as nearby — passing an arbitrary `personUserId` that isn't currently
   discoverable is silently ignored.
+
+---
+
+## Planning from a meet-up suggestion
+
+The meet-up suggestions feed (`GET /ai/meetup/suggestions`) renders cards with a
+**"Plan it"** CTA. When the user taps it, open the assistant screen and send a
+single opening `/assistant/chat` turn carrying the `suggestion` object. The
+server then opens the conversation grounded in that specific idea — and, when the
+suggestion names a venue, **anchored on that exact venue** rather than a fuzzy
+search.
+
+### What the client sends
+
+| Field                    | Required | Where it comes from                                              | What the server does with it |
+|--------------------------|----------|-----------------------------------------------------------------|------------------------------|
+| `suggestion.connectionId`| yes      | The suggestion's `connectionId` (a stable partner-user UUID).   | Locks the connection in as the active planning companion (see below). |
+| `suggestion.title`       | no       | `detailed` suggestion's `title` (e.g. `"Yoga coffee with Kiara"`). | Seeds the opening reply so it names the plan. |
+| `suggestion.place`       | no       | `detailed` suggestion's `place` (a venue **name**, e.g. `"Barista"`). | Resolved to an exact Foursquare place (see [Exact venue resolution](#exact-venue-resolution)). |
+| `suggestion.time`        | no       | `detailed` suggestion's `time` (free text, e.g. `"5pm"`).       | Seeds the opening reply so it confirms the time. |
+| `message`                | yes      | A short localized canned opener, e.g. `"Let's plan this"`.       | Stored verbatim as the user turn; the seed does the contextual work. |
+
+> `one_liner` suggestions carry only `connectionId` (no `title`/`place`/`time`).
+> Tapping "Plan it" on one still locks the connection in and opens with venue
+> options — see [Behavior matrix](#behavior-matrix).
+
+### Connection lock-in
+
+`suggestion.connectionId` is treated **exactly** like `connectionUserId`:
+
+- It becomes the active planning companion, and place searches re-center on the
+  **midpoint** between the user and that connection.
+- It persists across follow-up turns via `metadata.rememberedConnections`, so
+  the user can say "what about a rooftop bar instead?" without re-sending
+  `suggestion`.
+- Only **mutually-accepted** connections resolve — the id is re-verified
+  server-side against the user's accepted set. An arbitrary or non-accepted id
+  is silently ignored (the turn still proceeds, just without a companion).
+- If both `connectionUserId` and `suggestion.connectionId` are sent, the explicit
+  `connectionUserId` wins.
+
+### Exact venue resolution
+
+When `suggestion.place` is present, the server resolves the **name** to a single
+concrete Foursquare place — `place` is **not** a `placeId`, so it can't be tapped
+through the normal `placeId` short-circuit. The resolution is deterministic:
+
+1. Compute the **midpoint** between the user's coordinates and the locked-in
+   connection's coordinates (falls back to whichever side has coordinates).
+2. Run a Foursquare place search for the `place` name centered on that midpoint.
+3. Pick the result whose name is an **exact, case-insensitive match** for
+   `place`; if none matches exactly, pick the **top-ranked** result.
+4. Fetch that place's full detail (address, website, photo, rating) — the same
+   enrichment a place-tile tap performs.
+
+The turn then returns **exactly one `place_detail` card** for that venue, and the
+reply opens the plan around it (acknowledges the companion, confirms the venue and
+time, invites refinement). No LLM tool fan-out runs on this path, so it is
+deterministic and avoids the model picking a different "similar" spot.
+
+**Fallback.** If the named spot can't be resolved — no Foursquare match, or no
+coordinates available to form a midpoint — the server degrades gracefully to a
+normal `search_places` pass and returns a **`places`** card centered on the
+midpoint instead. The reply still opens the plan; the user just gets options
+rather than the one exact venue. **Clients must render whichever card type comes
+back** (`place_detail` or `places`).
+
+### Behavior matrix
+
+| Suggestion tapped              | `suggestion` sent                          | Card returned (happy path)        | Fallback                |
+|--------------------------------|--------------------------------------------|-----------------------------------|-------------------------|
+| `detailed` (has a venue)       | `connectionId` + `title` + `place` + `time`| `place_detail` (the exact venue)  | `places` if unresolved  |
+| `one_liner` (no venue)         | `connectionId` only                        | `places` (options near midpoint)  | `cards: []` if no coords |
+
+### Persistence & follow-ups
+
+Send `suggestion` **only on the opening turn**. The connection stays locked in via
+`metadata.rememberedConnections`, so subsequent turns are plain `message`-only
+turns ("can we do 6pm instead?", "somewhere quieter?") that keep the same
+companion and planning context. Tapping a different suggestion later just sends a
+fresh `suggestion` and re-anchors the conversation.
+
+#### Example — request (tapping "Plan it" on a `detailed` suggestion)
+
+```http
+POST /assistant/chat
+Authorization: Bearer eyJ...
+Content-Type: application/json
+
+{
+  "message": "Let's plan this",
+  "suggestion": {
+    "connectionId": "17f473f7-363c-46fc-99a0-788747eca16d",
+    "title": "Yoga coffee with Kiara",
+    "place": "Barista",
+    "time": "5pm"
+  }
+}
+```
+
+#### Example — response (exact venue resolved → `place_detail`)
+
+```json
+{
+  "success": true,
+  "reply": "Love it — coffee with Kiara at Barista around 5pm sounds perfect. It's an easy, relaxed spot midway between you two. Want me to lock in 5pm, or would another time suit you both better?",
+  "cards": [
+    {
+      "type": "place_detail",
+      "data": {
+        "placeId": "576f8dfacd10921479a5ed2d",
+        "name": "Barista",
+        "address": "Saket District Centre, New Delhi 110017, Delhi",
+        "lat": 28.5273,
+        "lng": 77.2166,
+        "types": ["Coffee Shop", "Café"],
+        "website": "https://www.barista.co.in"
+      }
+    }
+  ],
+  "messageId": "b1d2c3e4-5678-49ab-9cde-0123456789ab"
+}
+```
+
+#### Example — response (venue unresolved → `places` fallback)
+
+```json
+{
+  "success": true,
+  "reply": "Coffee with Kiara sounds great! I couldn't pin down that exact spot, but here are a few cafes roughly midway between you two.",
+  "cards": [
+    { "type": "places", "data": [ /* ...Place[] near the midpoint */ ] }
+  ],
+  "messageId": "c2e3d4f5-6789-4abc-8def-1234567890ab"
+}
+```
+
+> Latency: the exact path makes up to two Foursquare calls (search + detail),
+> each with a ~5 s timeout — typically faster than a full two-pass LLM tool turn.
+> The `places` fallback runs the normal `search_places` pass (~10–25 s). Keep the
+> typing indicator up until the response arrives; don't time out before 30 s.
 
 ---
 
@@ -792,6 +942,12 @@ export type ChatRequest = {
   placeId?: string;
   connectionUserId?: string;
   personUserId?: string;
+  suggestion?: {
+    connectionId: string;
+    title?: string;
+    place?: string;
+    time?: string;
+  };
 };
 
 export type ChatResponse = {

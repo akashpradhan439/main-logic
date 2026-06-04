@@ -231,6 +231,15 @@ export type ConnectionResolver = (ref: {
   userId?: string | null;
 }) => Promise<ConnectionContext[]>;
 
+/** A meet-up suggestion the user tapped "Plan it" on. The fields are free text
+ * from the suggestion engine (n8n), NOT Foursquare IDs, so the assistant opens
+ * the conversation grounded in the idea and searches for the named spot. */
+export type SuggestionSeed = {
+  title?: string | null | undefined;
+  place?: string | null | undefined;
+  time?: string | null | undefined;
+};
+
 export type AssistantConnectionOptions = {
   /** Connections carried forward from prior turns (seeded from message metadata). */
   rememberedConnections?: ConnectionContext[];
@@ -239,6 +248,9 @@ export type AssistantConnectionOptions = {
   /** Discover up to 10 people around the user with shared interests (bound to
    * supabase + the requesting user id). Keeps aiClient free of Supabase. */
   findNearbyPeople?: () => Promise<NearbyPerson[]>;
+  /** When the user tapped "Plan it" on a meet-up suggestion, its details so the
+   * assistant can open the conversation grounded in that specific idea. */
+  suggestionSeed?: SuggestionSeed | undefined;
 };
 
 /**
@@ -822,7 +834,7 @@ export async function chatWithAssistant(
 
   // Classify intent + extract any named connection in a single JSON pass.
   onStep({ type: "agent", agent: "planner", message: "Classifying intent (tool + connection)…" });
-  const { tool: selectedTool, findPeople, peopleNameFilter, connection } = await classifyTurn(
+  let { tool: selectedTool, findPeople, peopleNameFilter, connection } = await classifyTurn(
     client,
     deployment,
     userMessage,
@@ -952,8 +964,80 @@ export async function chatWithAssistant(
     }
   }
 
+  const suggestionSeed = connectionOptions.suggestionSeed;
+
   // The connection we plan around this turn is the most recently remembered one.
   const activeConnection = remembered.length > 0 ? remembered[remembered.length - 1] : null;
+
+  // "Plan it" with an exact venue: the suggestion named a real spot (free text,
+  // not a placeId). Resolve it to a concrete Foursquare place near the
+  // user↔connection midpoint and open the conversation on THAT exact place
+  // (deterministic place_detail) instead of a fuzzy search. Falls back to a
+  // place search only if the named spot can't be resolved.
+  if (suggestionSeed?.place) {
+    const center = midpoint(userContext.coords, activeConnection?.coords ?? null);
+    let resolved: Place | null = null;
+    if (center) {
+      onStep({ type: "agent", agent: "researcher", message: `Resolving exact place "${suggestionSeed.place}"…` });
+      const matches = await searchNearbyPlaces(
+        foursquareApiKey,
+        center.lat,
+        center.lng,
+        suggestionSeed.place
+      );
+      const wanted = suggestionSeed.place.trim().toLowerCase();
+      // Prefer an exact (case-insensitive) name match; else the top-ranked hit.
+      const top = matches.find((p) => p.name.trim().toLowerCase() === wanted) ?? matches[0] ?? null;
+      // Enrich to full detail (website/photos) like a card tap would.
+      if (top) resolved = (await getPlaceDetails(foursquareApiKey, top.placeId)) ?? top;
+    }
+
+    if (resolved) {
+      onStep({ type: "agent", agent: "researcher", message: `Resolved to ${resolved.name}` });
+      onStep({ type: "agent", agent: "executor", message: "Opening the plan around the exact spot" });
+      const planBits: string[] = [];
+      if (suggestionSeed.title) planBits.push(`"${suggestionSeed.title}"`);
+      if (suggestionSeed.time) planBits.push(`around ${suggestionSeed.time}`);
+      const withWhom = activeConnection ? ` with ${activeConnection.name}` : "";
+      const seedSystem =
+        `The user tapped "Plan it" on a meet-up suggestion${withWhom}` +
+        `${planBits.length ? ` (${planBits.join(", ")})` : ""}. ` +
+        `The suggested spot resolved to this exact place (already fetched — do NOT call any tool):\n` +
+        JSON.stringify({
+          name: resolved.name,
+          address: resolved.address,
+          types: resolved.types,
+          rating: resolved.rating,
+          website: resolved.website,
+        }) +
+        `\nWrite a warm 2-3 sentence reply that opens the plan: acknowledge the meet-up${withWhom}, ` +
+        `confirm ${resolved.name} as the spot${suggestionSeed.time ? ` ${suggestionSeed.time}` : ""}, ` +
+        `and invite them to refine it (time, or pick a different place). ` +
+        `Do not list other places and do not reveal any IDs.`;
+      const seedMessages: ChatCompletionMessageParam[] = [
+        { role: "system", content: systemPrompt },
+        { role: "system", content: seedSystem },
+        ...history.map((h) => ({ role: h.role, content: h.content })),
+        { role: "user", content: userMessage },
+      ];
+      const reply = await noToolsCompletion(seedMessages, streamToken);
+      onStep({ type: "card", card: { type: "place_detail", data: resolved } });
+      onStep({ type: "agent", agent: "critic", message: `Grounded in exact place: ${resolved.name}` });
+      return {
+        reply,
+        cards: [{ type: "place_detail", data: resolved }],
+        rememberedConnections: remembered,
+      };
+    }
+
+    onStep({ type: "agent", agent: "researcher", message: `Couldn't resolve "${suggestionSeed.place}"; falling back to a place search` });
+    // Named spot not found — still surface actionable options.
+    if (!selectedTool) selectedTool = "search_places";
+  } else if (!selectedTool && suggestionSeed?.title) {
+    // A seed with no named place (e.g. a one-liner suggestion) still opens with
+    // venue options rather than plain prose.
+    selectedTool = "search_places";
+  }
 
   // Place searches center on the midpoint between the user and the connection.
   let effectiveCoords = userContext.coords;
@@ -980,6 +1064,23 @@ export async function chatWithAssistant(
         `The user isn't asking for places or events right now — simply confirm you've noted ${activeConnection.name} for future planning.`
       );
     }
+  }
+
+  // Ground the opening turn in the tapped suggestion (independent of whether a
+  // connection resolved, though one normally will).
+  if (suggestionSeed && (suggestionSeed.title || suggestionSeed.place || suggestionSeed.time)) {
+    const parts: string[] = [];
+    if (suggestionSeed.title) parts.push(`titled "${suggestionSeed.title}"`);
+    if (suggestionSeed.place) parts.push(`at ${suggestionSeed.place}`);
+    if (suggestionSeed.time) parts.push(`around ${suggestionSeed.time}`);
+    connNotes.push(
+      `The user tapped "Plan it" on a meet-up suggestion ${parts.join(" ")}. ` +
+        `Open the conversation grounded in this idea${activeConnection ? ` with ${activeConnection.name}` : ""} — ` +
+        `acknowledge the plan warmly before anything else. ` +
+        (suggestionSeed.place
+          ? `Call search_places to find "${suggestionSeed.place}" or similar spots near them, and reference the suggested plan naturally.`
+          : `Help them turn it into a concrete plan.`)
+    );
   }
 
   const baseSystem: ChatCompletionMessageParam[] = [{ role: "system", content: systemPrompt }];

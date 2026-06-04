@@ -26,6 +26,18 @@ const ChatSchema = z
     placeId: z.string().min(1).max(120).optional(),
     connectionUserId: z.string().uuid().optional(),
     personUserId: z.string().uuid().optional(),
+    // Sent when the user taps "Plan it" on a meet-up suggestion. connectionId is
+    // the suggestion's connection (a partner user UUID); title/place/time are the
+    // free-text suggestion details used to open the conversation in-context.
+    suggestion: z
+      .object({
+        connectionId: z.string().uuid(),
+        title: z.string().min(1).max(120).optional(),
+        place: z.string().min(1).max(160).optional(),
+        time: z.string().min(1).max(80).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -131,7 +143,12 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
         }
         const message = parsed.data.message.trim();
         const tappedPlaceId = parsed.data.placeId;
-        const chosenConnectionUserId = parsed.data.connectionUserId;
+        const suggestion = parsed.data.suggestion;
+        // A tapped "Plan it" suggestion locks in its connection just like an
+        // explicit connections-chooser tap. Explicit connectionUserId wins if
+        // both are somehow present.
+        const chosenConnectionUserId =
+          parsed.data.connectionUserId ?? suggestion?.connectionId;
         const chosenPersonUserId = parsed.data.personUserId;
 
         const { data: me, error: meErr } = await supabase
@@ -262,6 +279,9 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
             rememberedConnections: seededRemembered,
             resolveConnections: (ref) => findAcceptedConnections(supabase, userId, ref),
             findNearbyPeople: () => findNearbyPeople(supabase, userId),
+            suggestionSeed: suggestion
+              ? { title: suggestion.title, place: suggestion.place, time: suggestion.time }
+              : undefined,
           }
         );
 

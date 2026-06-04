@@ -278,7 +278,7 @@ function renderCard(item: SuggestionItem) {
       subtitle: item.place,                    // "Barista"
       body: item.text,                         // "Aditya's into ..."
       primaryCta: "Plan it",
-      onPrimary: () => openPlanFlow(item.connectionId, item.place, item.time),
+      onPrimary: () => openPlanFlow(item),
     };
   } else {
     return {
@@ -288,9 +288,47 @@ function renderCard(item: SuggestionItem) {
       body: item.text,                         // "You and Geeta both love..."
       primaryCta: "Plan it",
       secondaryCta: "Not now",
-      onPrimary: () => openDraftFlow(item.connectionId),
+      onPrimary: () => openPlanFlow(item),
     };
   }
+}
+```
+
+### "Plan it" → open the AI assistant in-context
+
+Tapping **"Plan it"** opens the AI assistant screen and fires one opening
+`POST /assistant/chat` turn carrying a `suggestion` object. The assistant:
+
+- **Locks in the connection** — `suggestion.connectionId` is treated exactly like
+  the assistant's `connectionUserId`, so place searches re-center on the
+  user↔connection midpoint and the companion persists across follow-up turns.
+- **Anchors on the exact venue** — for a `detailed` suggestion, the assistant
+  resolves `place` (a venue *name*, not an ID) to the **exact** Foursquare place
+  near the midpoint and returns a single `place_detail` card. If it can't be
+  resolved, it falls back to a `places` card of nearby options.
+- **For a `one_liner`** (no `place`), it opens with `places` options near the
+  midpoint instead.
+
+Pass `suggestion` **only on this first turn**; subsequent turns are plain
+`message`-only and keep the same companion. See the assistant API's
+[Planning from a meet-up suggestion](./assistant-api.md#planning-from-a-meet-up-suggestion)
+for the full request/response contract, behavior matrix, and latency notes.
+
+```ts
+function openPlanFlow(item: SuggestionItem) {
+  navigateToAssistantScreen();
+  sendAssistantChat({
+    message: "Let's plan this",          // localized canned opener
+    suggestion: {
+      connectionId: item.connectionId,
+      // title/place/time only exist on detailed suggestions
+      ...(item.type === "detailed"
+        ? { title: item.title, place: item.place, time: item.time }
+        : {}),
+    },
+  });
+  // The reply may carry a `place_detail` card (exact venue) OR a `places` card
+  // (fallback / one_liner). Render whichever comes back.
 }
 ```
 
