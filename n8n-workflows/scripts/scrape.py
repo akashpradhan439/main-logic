@@ -148,8 +148,12 @@ def scrape(query: str, location: str = ""):
             """
         )
         page = ctx.new_page()
+        # Abort fonts/css/svg (icons, never event art) to keep the fetch lean,
+        # but allow raster images (png/jpg/jpeg/gif) so each event card's
+        # thumbnail <img src> resolves to a real URL in the captured DOM. Those
+        # URLs are what the downstream parser extracts as imageUrl.
         page.route(
-            "**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,otf,css}",
+            "**/*.{svg,woff,woff2,ttf,otf,css}",
             lambda r: r.abort(),
         )
 

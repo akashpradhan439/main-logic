@@ -2,7 +2,7 @@
 
 ## Overview
 
-A conversational assistant personalized to each user (name, bio, interests, H3 location, language preference). Replies are always prose text plus an optional `cards` array of structured data that the client renders inline with the chat bubble. Three card types exist:
+A conversational assistant personalized to each user (name, bio, interests, H3 location, language preference). Replies are always prose text plus an optional `cards` array of structured data that the client renders inline with the chat bubble. Five card types exist:
 
 | Card type      | Source                                              | UI shape                                  |
 |----------------|-----------------------------------------------------|-------------------------------------------|
@@ -10,6 +10,7 @@ A conversational assistant personalized to each user (name, bio, interests, H3 l
 | `events`       | Google Events (via n8n + Playwright + Groq parser)  | Vertical list of event tiles               |
 | `place_detail` | Foursquare Places API (`/places/{id}`)              | Full-bleed detail sheet (one place)        |
 | `connections`  | Supabase (the user's accepted connections)          | Chooser list when a named connection is ambiguous |
+| `people`       | Supabase (people physically near the user, not yet connected) | Chooser/discovery list ("who's around me") |
 
 Chat history is persisted server-side per user in the `assistant_messages` table. Two endpoints:
 
@@ -118,6 +119,35 @@ type ConnectionMatch = {
 };
 ```
 
+### `people` card
+
+Returned when the user asks the assistant to discover people physically around
+them ("who's around me", "anyone nearby into climbing?"). The list contains people
+the user is **not** already connected to, ranked by shared interests then proximity
+(capped at 10). On tap, send a follow-up `/assistant/chat` turn with `personUserId`
+set to the chosen `userId` to lock that person in as the planning companion (see
+[Nearby-people discovery](#nearby-people-discovery)).
+
+```ts
+{
+  type: "people",
+  data: NearbyPerson[]
+}
+
+type NearbyPerson = {
+  userId: string;            // discovered user id; echo back as personUserId
+  name: string;              // "First Last"
+  interests: string[];       // all of their interests
+  sharedInterests: string[]; // intersection with the requesting user's interests
+  coords: { lat: number; lng: number } | null;  // approximate (H3 cell centroid); null if unknown
+  isNearby: boolean;         // true if in the same / a neighboring H3 cell right now
+  proximityCount: number;    // how many recent hex-overlap encounters with this person
+};
+```
+
+> `coords` is derived from a coarse H3 cell, not a precise GPS fix — use it for
+> rough distance/sorting hints only, never as a pin-accurate location.
+
 ### `Place` object
 
 | Field      | Type     | Required | Notes                                                                  |
@@ -130,6 +160,7 @@ type ConnectionMatch = {
 | `rating`   | number   | no       | Only present on enriched calls; usually absent on default-tier results. |
 | `types`    | string[] | yes      | Foursquare category names, e.g. `["Coffee Shop","Café"]`. May be `[]`. |
 | `website`  | string   | no       | URL. Present mostly on `place_detail` results.                         |
+| `imageUrl` | string   | no       | Full-size Foursquare photo URL. Sourced from Foursquare's **Premium** `photos` field, so it is **frequently absent** (the server falls back to core fields when photos aren't available/billable). Applies to both `places` and `place_detail` cards. Render a placeholder when missing. |
 
 ### `EventResult` object
 
@@ -143,6 +174,7 @@ type ConnectionMatch = {
 | `link`    | string \| null | no       | Ticket/info URL.                                            |
 | `source`  | string \| null | no       | Source label (e.g. `"BookMyShow"`, `"Insider"`).            |
 | `price`   | string \| null | no       | Free-form price string (e.g. `"From ₹500"`).                |
+| `imageUrl`| string \| null | no       | Event poster/thumbnail URL, scraped from the source. Often absent. |
 
 > Optional string fields may be absent OR explicitly `null`. Render them only when present and non-empty.
 
@@ -166,15 +198,21 @@ Content-Type: application/json
 {
   message: string,            // 1-500 chars, trimmed server-side
   placeId?: string,           // 1-120 chars; pass when the user taps a Place card
-  connectionUserId?: string   // UUID; pass when the user taps a connections chooser card
+  connectionUserId?: string,  // UUID; pass when the user taps a connections chooser card
+  personUserId?: string       // UUID; pass when the user taps a people (nearby) chooser card
 }
 ```
+
+> The request body is validated **strictly** — sending a key not listed below
+> returns a 400. (This applies to the request only; response objects may still
+> gain new fields over time, which clients must tolerate — see [Versioning](#versioning).)
 
 | Field     | Type   | Required | Constraints / semantics                                                       |
 |-----------|--------|----------|-------------------------------------------------------------------------------|
 | `message` | string | yes      | The user's text. Min 1 char, max 500 chars. Trimmed before processing.        |
 | `placeId` | string | no       | Foursquare `placeId` from a previously-returned card. **Pass this whenever the user taps a card** — the server short-circuits the LLM tool path, fetches the detail synchronously, and always returns a `place_detail` card with a focused reply. |
 | `connectionUserId` | string (UUID) | no | A `userId` from a `connections` chooser card. **Pass this when the user taps a connection** to lock it in as the active planning companion. Resend the original intent in `message` (e.g. "find a cafe to meet them"). |
+| `personUserId` | string (UUID) | no | A `userId` from a `people` chooser card. **Pass this when the user taps a discovered nearby person** to lock them in as the active planning companion. The server re-verifies they are genuinely nearby before accepting. Resend the original intent in `message` (e.g. "find a cafe to meet them"). |
 
 #### Example A — free-text turn (no tap)
 
@@ -365,7 +403,7 @@ Returned when Zod validation fails. `error` is a field-map.
 }
 ```
 
-Possible field keys: `message`, `placeId`. Show field-specific errors next to your inputs.
+Possible field keys: `message`, `placeId`, `connectionUserId`, `personUserId`. Show field-specific errors next to your inputs.
 
 #### 401 Unauthorized — missing/invalid JWT
 
@@ -400,6 +438,33 @@ The assistant can fold one of the user's **accepted connections** into place/eve
 - **Privacy:** only mutually-accepted connections are resolvable. Unknown or non-accepted names yield a graceful "couldn't find that connection" reply.
 
 > `metadata.rememberedConnections` is an internal field surfaced via `/history`; clients should ignore it (per the unknown-field rule).
+
+---
+
+## Nearby-people discovery
+
+Distinct from connection-aware planning (which folds in an *existing accepted
+connection*), the assistant can also **discover people the user is not yet
+connected to** who are physically nearby.
+
+- **Triggering:** when the user asks something like "who's around me?", "anyone
+  nearby into climbing?", or "find people with similar interests", the assistant
+  runs discovery over the same / neighboring H3 cell plus recent hex-overlap
+  history, excluding anyone the user is already connected to (any status).
+- **Result:** a `people` card with up to 10 `NearbyPerson` entries, ranked by
+  shared interests then proximity. The reply names a few of them.
+- **Empty result:** if nobody qualifies, the turn returns `cards: []` with a
+  graceful reply — no error.
+- **Selecting someone:** on tap, the client resends the turn with `personUserId`
+  set to the chosen `userId`. The server **re-runs discovery and re-verifies**
+  the person is still genuinely nearby (privacy guard) before locking them in as
+  the active planning companion. From then on the flow mirrors connection-aware
+  planning: place searches re-center on the midpoint between the user and that
+  person, and their interests are factored in. The selection is remembered across
+  turns via the same `metadata.rememberedConnections` mechanism.
+- **Privacy:** a user can only plan around someone the assistant actually
+  surfaced as nearby — passing an arbitrary `personUserId` that isn't currently
+  discoverable is silently ignored.
 
 ---
 
@@ -639,9 +704,11 @@ async function loadOlderMessages(): Promise<void> {
 
 | Card type      | UI suggestion                                                                                              |
 |----------------|------------------------------------------------------------------------------------------------------------|
-| `places`       | Horizontal scroll of small tiles inside the bubble. Tap → call `/chat` with `placeId`. Hide tiles where `lat=0` if you need map pins. |
-| `events`       | Vertical list inside the bubble. `link` (when present) becomes a "Buy tickets" button. Render `date` as-is — it is not machine-parseable. |
-| `place_detail` | Larger inline card or a modal sheet. Show `website` (when present) as a tappable link.                     |
+| `places`       | Horizontal scroll of small tiles inside the bubble. Tap → call `/chat` with `placeId`. Show `imageUrl` as the tile thumbnail when present; placeholder otherwise. Hide tiles where `lat=0` if you need map pins. |
+| `events`       | Vertical list inside the bubble. `link` (when present) becomes a "Buy tickets" button. Show `imageUrl` as a poster thumbnail when present. Render `date` as-is — it is not machine-parseable. |
+| `place_detail` | Larger inline card or a modal sheet. Show `imageUrl` as a hero image (when present) and `website` (when present) as a tappable link.                     |
+| `connections`  | Chooser list. Tap → call `/chat` with `connectionUserId` and the original intent re-sent in `message`.    |
+| `people`       | Discovery/chooser list. Surface `sharedInterests` prominently and an "in your area now" badge when `isNearby`. Tap → call `/chat` with `personUserId` and the original intent re-sent in `message`. |
 
 ### Mixed `places` + `events`
 
@@ -682,6 +749,7 @@ export type Place = {
   rating?: number;
   types: string[];
   website?: string;
+  imageUrl?: string;
 };
 
 export type EventResult = {
@@ -693,6 +761,7 @@ export type EventResult = {
   link?: string | null;
   source?: string | null;
   price?: string | null;
+  imageUrl?: string | null;
 };
 
 export type ConnectionMatch = {
@@ -701,16 +770,28 @@ export type ConnectionMatch = {
   interests: string[];
 };
 
+export type NearbyPerson = {
+  userId: string;
+  name: string;
+  interests: string[];
+  sharedInterests: string[];
+  coords: { lat: number; lng: number } | null;
+  isNearby: boolean;
+  proximityCount: number;
+};
+
 export type AssistantCard =
   | { type: "places"; data: Place[] }
   | { type: "events"; data: EventResult[] }
   | { type: "place_detail"; data: Place }
-  | { type: "connections"; data: ConnectionMatch[] };
+  | { type: "connections"; data: ConnectionMatch[] }
+  | { type: "people"; data: NearbyPerson[] };
 
 export type ChatRequest = {
   message: string;
   placeId?: string;
   connectionUserId?: string;
+  personUserId?: string;
 };
 
 export type ChatResponse = {
