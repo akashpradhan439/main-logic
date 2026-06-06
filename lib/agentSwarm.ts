@@ -121,6 +121,7 @@ export type SwarmState = {
 
 export type SwarmEvent =
   | { type: "agent_start"; agent: AgentName; phase: SwarmState["phase"]; attempt?: number }
+  | { type: "agent"; agent: AgentName; message: string }
   | { type: "inference"; agent: AgentName; delta: string }
   | { type: "trace"; entry: AgentTrace }
   | { type: "phase"; phase: SwarmState["phase"] }
@@ -523,7 +524,7 @@ ${priorCritique}${humanNote}`;
 
 // ─── Agent: Critic ────────────────────────────────────────────────────────────
 
-async function criticAgent(state: SwarmState, onToken?: (delta: string) => void): Promise<void> {
+async function criticAgent(state: SwarmState, onToken?: (delta: string) => void, emit?: SwarmEmit): Promise<void> {
   const t0 = Date.now();
   agentLog("critic", `Validating output (attempt ${state.attempts}/${state.maxAttempts})`);
   state.phase = "critique";
@@ -577,10 +578,9 @@ Return ONLY valid JSON: {"approved":true/false,"feedback":"brief explanation","i
       .join("\n");
     const safety = await analyzeTextSafety(safetyText);
     if (safety.checked) {
-      agentLog(
-        "critic",
-        `Azure AI Content Safety: ${safety.safe ? "passed" : `FLAGGED ${safety.flagged.join(", ")}`} (maxSeverity=${safety.maxSeverity})`
-      );
+      const safetyMsg = `Azure AI Content Safety: ${safety.safe ? "passed ✓" : `FLAGGED ${safety.flagged.join(", ")}`} (maxSeverity=${safety.maxSeverity})`;
+      agentLog("critic", safetyMsg);
+      if (emit) emit({ type: "agent", agent: "critic", message: safetyMsg });
       if (!safety.safe && state.critiqueResult.approved) {
         state.critiqueResult = {
           approved: false,
@@ -693,7 +693,7 @@ export async function runSwarm(params: SwarmParams): Promise<SwarmState> {
 
       checkAbort();
       emit({ type: "agent_start", agent: "critic", phase: "critique", attempt: state.attempts });
-      await criticAgent(state, mkToken("critic"));
+      await criticAgent(state, mkToken("critic"), emit);
       await saveState(state);
       emit({ type: "phase", phase: state.phase });
       flushTraces();
