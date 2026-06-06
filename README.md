@@ -248,6 +248,6 @@ This project was built **solo**.
 
 | Member | Role | Responsibilities |
 |---|---|---|
-| **Akash** ([@bekindamen](https://github.com/bekindamen)) | Founder & Full-Stack Engineer | End-to-end ownership: agent swarm design & orchestration (`agentSwarm.ts`), Azure AI Foundry integration, connection-aware planning, E2EE messaging, location/proximity engine, infrastructure (Docker, RabbitMQ, n8n), and all submission deliverables. |
+| **Akash** ([@akashpradhan439](https://github.com/akashpradhan439)) | Founder & Full-Stack Engineer | End-to-end ownership: agent swarm design & orchestration (`agentSwarm.ts`), Azure AI Foundry integration, connection-aware planning, E2EE messaging, location/proximity engine, infrastructure (Docker, RabbitMQ, n8n), and all submission deliverables. |
 
 > _Solo build — a single engineer shipped the full production-grade, containerized multi-agent system._
