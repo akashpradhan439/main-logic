@@ -10,8 +10,8 @@ Pipeline behind the scenes:
 Client → GET /ai/meetup/suggestions
          ↓
        Fastify (cache check) → n8n webhook → Fastify /context (connections, location, time)
-                                           → Ola Maps (nearby spots)
-                                           → Groq (generation + supervisor loop, 1-3 attempts)
+                                           → Foursquare Places Search (nearby spots)
+                                           → Azure AI Foundry (generation + supervisor loop, 1-3 attempts)
                                            → back to Fastify (15-min Redis cache)
          ↓
        Client renders mixed list of "detailed" and "one_liner" cards
@@ -215,7 +215,7 @@ type ErrorResponse = { success: false; error: string };
 - `suggestions: []` is a valid successful response (e.g. user has 0 connections). Render an empty-state with a CTA to add connections.
 
 ### Place may include long official names
-- The Ola Maps response can include verbose names like `"Mosaic - Fairlie Hotels & Resorts, Satbari, Chattarpur Delhi"`. Truncate at the comma or to a sensible width in the UI; don't try to normalise on the client (the place string is what was passed to Ola, so it's the same string a user would see on a map link).
+- The Foursquare response can include verbose names like `"Mosaic - Fairlie Hotels & Resorts, Satbari, Chattarpur Delhi"`. Truncate at the comma or to a sensible width in the UI; don't try to normalise on the client (the place string is what was passed to Foursquare, so it's the same string a user would see on a map link).
 
 ---
 

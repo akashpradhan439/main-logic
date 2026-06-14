@@ -147,8 +147,8 @@
           "timeout": 30000
         }
       },
-      "id": "groq-parser",
-      "name": "Groq: Parse Events",
+      "id": "azure-parser",
+      "name": "Azure: Parse Events",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [1520, 340],
@@ -210,10 +210,10 @@
     "Cache Hit?": {
       "main": [
         [{ "node": "Webhook Response", "type": "main", "index": 0 }],
-        [{ "node": "Groq: Parse Events", "type": "main", "index": 0 }]
+        [{ "node": "Azure: Parse Events", "type": "main", "index": 0 }]
       ]
     },
-    "Groq: Parse Events": {
+    "Azure: Parse Events": {
       "main": [[{ "node": "Validate + Clean Events", "type": "main", "index": 0 }]]
     },
     "Validate + Clean Events": {

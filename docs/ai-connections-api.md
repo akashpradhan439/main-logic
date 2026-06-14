@@ -5,7 +5,7 @@
 This API surface adds two capabilities to the platform:
 
 1. **Profile** — users store a free-text `bio` and a list of `interests`. These power discovery and connection matching.
-2. **AI Connection Suggestions** — Groq (llama-3.3-70b-versatile) powered ranked list of users you might want to connect with, generated from your profile, location history, social graph, and proximity co-occurrences.
+2. **AI Connection Suggestions** — Azure AI Foundry (Llama-3.3-70B-Instruct) powered ranked list of users you might want to connect with, generated from your profile, location history, social graph, and proximity co-occurrences.
 
 Transport is HTTPS. All requests and responses are JSON.
 
@@ -185,8 +185,8 @@ Behind the scenes:
    - Users who have appeared with you in the proximity `notifications` table (`proximityCount`).
    - Friends-of-friends via your accepted `connections` (`mutualConnections`).
 3. **Filtering** — excludes yourself and anyone you already have a connection row with (`pending`, `accepted`, `rejected`, or `blocked`).
-4. **Pre-ranking** — local score `sharedInterests*3 + mutualConnections*2 + proximityCount + (isNearby ? 1 : 0)`, top 20 forwarded to Groq.
-5. **Groq ranking + reasoning** — `llama-3.3-70b-versatile` returns a sorted JSON array with a 1–2 sentence reason for each suggestion. If Groq is unavailable or returns malformed output, the server falls back to deterministic reason strings.
+4. **Pre-ranking** — local score `sharedInterests*3 + mutualConnections*2 + proximityCount + (isNearby ? 1 : 0)`, top 20 forwarded to Azure AI Foundry.
+5. **Azure AI Foundry ranking + reasoning** — `Llama-3.3-70B-Instruct` returns a sorted JSON array with a 1–2 sentence reason for each suggestion. If Azure AI Foundry is unavailable or returns malformed output, the server falls back to deterministic reason strings.
 6. **Top 10** are returned and cached.
 
 **Request:**
@@ -265,8 +265,8 @@ This is **not** an error — the client should display an empty-state message su
 | User has no bio/interests, no h3_cell  | `suggestions: []`                                               |
 | User has h3_cell but no connections    | Nearby users (if any) appear, ranked by proximity & shared interests |
 | User has connections but no profile    | Friends-of-friends appear, ranked by mutual count               |
-| Groq API key not configured            | Suggestions still returned with deterministic fallback reasons  |
-| Redis unavailable                      | Cache is silently skipped — Groq is called on every request     |
+| Azure AI Foundry not configured        | Suggestions still returned with deterministic fallback reasons  |
+| Redis unavailable                      | Cache is silently skipped — Azure AI Foundry is called on every request |
 
 ### Caching Semantics
 
@@ -281,7 +281,7 @@ This is **not** an error — the client should display an empty-state message su
 | 401    | `"common.errors.auth_required"`       | Missing / invalid / expired token                                        |
 | 500    | `"common.errors.unable_to_process"`   | Database failure fetching profile/connections/candidates, or unexpected server error |
 
-> Note: Groq API failures do **not** produce a 500. The server falls back to deterministic reasons and still returns 200.
+> Note: Azure AI Foundry API failures do **not** produce a 500. The server falls back to deterministic reasons and still returns 200.
 
 ---
 

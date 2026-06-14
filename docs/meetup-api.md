@@ -5,9 +5,9 @@
 This API provides AI-powered meet-up spot suggestions based on the user's location, interests, and time of day. The Fastify server is a thin wrapper around an n8n workflow that orchestrates the multi-step pipeline:
 
 1. Fetch user context (location, bio, interests)
-2. Groq (llama-3.3-70b-versatile) converts the context into Ola Maps search parameters
-3. Ola Maps Nearby Search returns nearby places
-4. Groq ranks the places and writes a personalized one-line reason per spot
+2. Azure AI Foundry (Llama-3.3-70B-Instruct) converts the context into Foursquare search parameters
+3. Foursquare Places API returns nearby places
+4. Azure AI Foundry ranks the places and writes a personalized one-line reason per spot
 
 Transport is HTTPS. Both endpoints return JSON.
 
@@ -82,21 +82,21 @@ No request body.
 | `success`| boolean  | Always `true` for 200                                          |
 | `cached` | boolean  | `true` if served from Redis (30-min TTL), `false` if freshly computed |
 | `type`   | string   | Echoes the query param (or `"any"` if omitted)                 |
-| `spots`  | object[] | Up to 5 ranked spots. May be empty if Ola Maps returns no results. |
+| `spots`  | object[] | Up to 5 ranked spots. May be empty if Foursquare returns no results. |
 
 **Spot item fields:**
 
 | Field            | Type   | Notes                                                                |
 |------------------|--------|----------------------------------------------------------------------|
-| `name`           | string | Place name from Ola Maps `structured_formatting.main_text`           |
-| `address`        | string | Place address from Ola Maps `structured_formatting.secondary_text`   |
-| `distanceMeters` | number | Distance from user in meters (Ola Maps `distance_meters`)            |
+| `name`           | string | Place name from Foursquare                                           |
+| `address`        | string | Place address from Foursquare `location.formatted_address`           |
+| `distanceMeters` | number | Distance from user in meters                                         |
 | `mapsUrl`        | string | Google Maps deep link (built from place coordinates when available)  |
 | `reason`         | string | 1–2 sentence AI explanation, tailored to the user's profile + time   |
 
 ### Empty Result
 
-If Ola Maps returns `status: "zero_results"` (no places matched), the response is:
+If Foursquare returns no results (no places matched), the response is:
 
 ```json
 { "success": true, "cached": false, "type": "coffee", "spots": [] }
@@ -120,7 +120,7 @@ This is **not** an error — display an empty state to the user (e.g. "No spots 
 
 > ⚠️ This endpoint is **internal** — it is called by the n8n workflow, not by clients. It is documented here for completeness and debugging.
 
-Returns the structured context object that the n8n workflow uses to build its Ola Maps search.
+Returns the structured context object that the n8n workflow uses to build its Foursquare search.
 
 ### Request
 
@@ -238,8 +238,9 @@ Inside n8n (Docker env vars):
 ```
 N8N_WEBHOOK_SECRET=<same-as-above>
 APP_BASE_URL=http://api:3000
-OLA_MAPS_API_KEY=<ola-maps-key>
-GROQ_API_KEY=<groq-key>   # used as Authorization: Bearer header by the HTTP nodes
+FOURSQUARE_API_KEY=<foursquare-places-api-key>
+AZURE_OPENAI_ENDPOINT=<azure-ai-foundry-endpoint>
+AZURE_OPENAI_API_KEY=<azure-ai-foundry-key>
 ```
 
 See `n8n-workflows/README.md` for the full n8n setup walkthrough.
@@ -253,4 +254,3 @@ See `n8n-workflows/README.md` for the full n8n setup walkthrough.
 - **Pull-to-refresh** is mostly a no-op due to the 30-min cache; consider only enabling it after the cache TTL has elapsed.
 - **Handle empty `spots[]`** as a normal state, not an error.
 - **`mapsUrl` opens Google Maps** — on iOS this opens Google Maps app if installed, otherwise Apple Maps fallback can be configured client-side.
-- **No `rating` field** — Ola Maps Nearby Search does not return ratings; do not expect or render star ratings.

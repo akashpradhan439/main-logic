@@ -4,7 +4,7 @@ This directory contains n8n workflow JSON files that orchestrate the AI features
 
 ## events-scraper.json
 
-Pipeline behind the AI assistant's `search_events` tool. The Fastify server (`lib/eventsScraper.ts`) calls this workflow's webhook; the workflow does the actual Google Events scraping with a headless Playwright browser and uses Groq to extract structured events from the rendered HTML.
+Pipeline behind the AI assistant's `search_events` tool. The Fastify server (`lib/eventsScraper.ts`) calls this workflow's webhook; the workflow does the actual Google Events scraping with a headless Playwright browser and uses Azure AI Foundry to extract structured events from the rendered HTML.
 
 ### Pipeline
 
@@ -17,7 +17,7 @@ Webhook (POST /webhook/events-scraper, header X-N8N-Secret)
        │           → Parse Scraper Output (Code: route cache vs live)
        │           → Cache Hit? (IF node)
        │                ├─ hit  → Webhook Response (success, fromCache=true)
-       │                └─ miss → Groq: Parse Events (HTTP → llama-3.3-70b-versatile, JSON mode)
+       │                └─ miss → Azure: Parse Events (HTTP → Azure AI Foundry, Llama-3.3-70B-Instruct, JSON mode)
        │                        → Validate + Clean Events (Code: schema check, cap to 20)
        │                        → Webhook Response (success, fromCache=false)
        └─ fail → Respond Unauthorized (401)
@@ -35,12 +35,11 @@ The stack already wires this up — `docker compose -f docker-compose.prod.yml u
 **Required environment variables (in `.env` consumed by docker-compose):**
 ```
 N8N_WEBHOOK_SECRET   — shared secret with Fastify (must match config.n8nWebhookSecret)
-GROQ_API_KEY         — your Groq API key (used by the Groq parser node)
 ```
 
 **Manual / non-Docker setup:**
 1. Build & run the scraper service: `cd scraper-service && docker build -t mainlogic-scraper . && docker run -p 8080:8080 mainlogic-scraper`
-2. Set `SCRAPER_SERVICE_URL=http://localhost:8080` (and `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`, `GROQ_API_KEY`, `N8N_WEBHOOK_SECRET`) on your n8n process.
+2. Set `SCRAPER_SERVICE_URL=http://localhost:8080` (and `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`, `N8N_WEBHOOK_SECRET`) on your n8n process.
 3. Import `events-scraper.json` via n8n UI and activate it.
 
 In every case, point the Fastify server at the n8n webhook URL:
@@ -89,19 +88,19 @@ webhook synchronously; the workflow returns a ranked list of meet-up spots.
 Webhook (POST /webhook/meetup-spots, header X-N8N-Secret)
   → Verify Secret (IF node)
        ├─ pass → Fetch Context (HTTP, calls Fastify /ai/meetup/spots/context)
-       │           → Groq: Format Search Params (HTTP → Groq llama-3.3-70b-versatile)
+        │           → Azure: Format Search Params (HTTP → Azure AI Foundry, Llama-3.3-70B-Instruct)
        │           → Parse Search Params (Code: JSON.parse)
-       │           → Ola Maps Nearby Search (HTTP, https://api.olamaps.io/places/v1/nearbysearch)
-       │           → Normalize Places (Code: map predictions)
-       │           → Groq: Recommend Spots (HTTP → Groq llama-3.3-70b-versatile)
+       │           → Foursquare Places Search (HTTP, https://places-api.foursquare.com/places/search)
+       │           → Normalize Places (Code: map results)
+        │           → Azure: Recommend Spots (HTTP → Azure AI Foundry, Llama-3.3-70B-Instruct)
        │           → Build Response (Code: merge AI reasons with place data, build mapsUrl)
        │           → Respond Success
        └─ fail → Respond Unauthorized (401)
 ```
 
-Both AI nodes use plain HTTP Request nodes calling `https://api.groq.com/openai/v1/chat/completions`
-directly — no n8n-specific Groq integration is required, and the workflow works on any n8n version.
-`response_format: { type: "json_object" }` is set on both calls so Groq guarantees parseable JSON.
+Both AI nodes use plain HTTP Request nodes calling Azure AI Foundry (OpenAI-compatible endpoint)
+directly — no n8n-specific integration is required, and the workflow works on any n8n version.
+`response_format: { type: "json_object" }` is set on both calls so the model guarantees parseable JSON.
 
 ### Setup
 
@@ -111,22 +110,82 @@ directly — no n8n-specific Groq integration is required, and the workflow work
    ```
    N8N_WEBHOOK_SECRET            — shared secret with the Fastify server (must match config.n8nWebhookSecret)
    APP_BASE_URL                  — internal URL to reach your Fastify container, e.g. http://app:3000
-   OLA_MAPS_API_KEY              — your Ola Maps API key
-   GROQ_API_KEY                  — your Groq API key (from https://console.groq.com/keys)
+   FOURSQUARE_API_KEY            — your Foursquare Places API key
+   AZURE_OPENAI_ENDPOINT         — Azure AI Foundry endpoint (OpenAI-compatible)
+   AZURE_OPENAI_API_KEY          — Azure AI Foundry API key
+   AZURE_OPENAI_DEPLOYMENT       — model deployment name (default: Llama-3.3-70B-Instruct)
    N8N_BLOCK_ENV_ACCESS_IN_NODE  — must be `false` (default is `true` in recent n8n versions)
    ```
    In a Docker Compose setup, `APP_BASE_URL` is typically the service name of your Fastify app
    container, e.g. `http://api:3000` if your service is named `api`.
 
-   > **Why `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` is required:** the workflow's `Verify Secret` IF node and both Groq/Ola HTTP nodes resolve credentials via `{{ $env.* }}` expressions. Recent n8n versions block expression access to environment variables by default, which causes the first execution to fail with `ExpressionError: access to env vars denied`.
+   > **Why `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` is required:** the workflow's `Verify Secret` IF node and HTTP nodes resolve credentials via `{{ $env.* }}` expressions. Recent n8n versions block expression access to environment variables by default, which causes the first execution to fail with `ExpressionError: access to env vars denied`.
 
-3. **No additional credentials needed** — both Groq HTTP calls authenticate via `Authorization: Bearer {{ $env.GROQ_API_KEY }}` header from the env var above. Just make sure `GROQ_API_KEY` is set in the n8n container's env.
+3. **No additional credentials needed** — both AI calls authenticate via `Authorization: Bearer {{ $env.AZURE_OPENAI_API_KEY }}` header. Foursquare authenticates via `Authorization: Bearer {{ $env.FOURSQUARE_API_KEY }}` header.
 
 4. **Activate** the workflow. Note the webhook URL shown by n8n — it will look like:
    ```
    http://<your-n8n-host>:5678/webhook/meetup-spots
    ```
    Set this URL on your Fastify server as `N8N_MEETUP_WEBHOOK_URL` in `.env`.
+
+## meetup-suggestions.json
+
+Pipeline behind `GET /ai/meetup/suggestions`. The Fastify server calls this workflow's
+webhook synchronously; the workflow returns personalized meet-up suggestion cards. It runs
+Foursquare venue search and the events scraper in parallel, then feeds both into an
+LLM generate-then-validate loop.
+
+### Pipeline
+
+```
+Webhook (POST /webhook/meetup-suggestions, header X-N8N-Secret)
+  → Verify Secret (IF node)
+       ├─ pass → Fetch Context (HTTP, calls Fastify /ai/meetup/suggestions/context)
+       │           ├─→ Foursquare Places Search (HTTP, https://places-api.foursquare.com/places/search)
+       │           │       → Normalize Places (Code: map results)
+       │           │       ──────────────┐
+       │           └─→ Events Scraper Call (HTTP, POST /webhook/events-scraper)
+       │                   → Normalize Events (Code: extract events array)
+       │                   ──────────────┤
+       │                                 ├→ Merge Results (Append)
+       │                                 │   → Prepare Input (Code: combine context+places+events)
+       │                                 │       → Generate + Supervisor Loop (Code: LLM gen + deterministic + supervisor)
+       │                                 │           → Build Response → Respond Success
+       └─ fail → Respond Unauthorized (401)
+```
+
+The Generate + Supervisor Loop runs up to 4 iterations of:
+1. LLM generation (Azure AI Foundry, Llama-3.3-70B, temperature 0.85)
+2. Deterministic validation (connectionId existence, type match, name match, text rules, banned phrases)
+3. LLM supervisor review (temperature 0.1, APPROVE/REJECT)
+4. If REJECTED, feedback feeds back into the next generation attempt
+
+Events data is passed to the LLM so it can reference real upcoming events in suggestions
+(e.g. "There's a jazz night at Blue Tokai this Saturday you'd both love").
+
+### Setup
+
+1. **Import** the JSON via n8n UI → Workflows → Import from File → `meetup-suggestions.json`.
+
+2. **Set n8n environment variables** (Docker `-e` or `n8n` config):
+   ```
+   N8N_WEBHOOK_SECRET            — shared secret with the Fastify server
+   APP_BASE_URL                  — internal URL to reach your Fastify container
+   FOURSQUARE_API_KEY            — your Foursquare Places API key
+   AZURE_OPENAI_ENDPOINT         — Azure AI Foundry endpoint
+   AZURE_OPENAI_API_KEY          — Azure AI Foundry API key
+   AZURE_OPENAI_DEPLOYMENT       — model deployment name (default: Llama-3.3-70B-Instruct)
+   N8N_EVENTS_SCRAPER_WEBHOOK_URL — internal URL to call the events scraper webhook on this n8n instance (e.g. http://localhost:5678/webhook/events-scraper)
+   N8N_BLOCK_ENV_ACCESS_IN_NODE  — must be `false`
+   ```
+
+3. The events scraper workflow must also be imported and activated on the same n8n instance.
+   `N8N_EVENTS_SCRAPER_WEBHOOK_URL` must point to the events scraper webhook on this n8n instance.
+   If the scraper is unreachable or the env var is not set, the workflow continues gracefully without events data.
+
+4. **Activate** the workflow. Set the webhook URL on your Fastify server as
+   `N8N_MEETUP_SUGGESTIONS_WEBHOOK_URL` in `.env`.
 
 ### Network Notes (Docker)
 

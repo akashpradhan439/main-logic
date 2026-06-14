@@ -11,7 +11,7 @@ Stdout (single line of JSON) is one of:
     {"source":"error","status":"BLOCKED|EMPTY|...","events":[]}   # all retries failed
 
 The n8n workflow inspects "source": when "cache" it short-circuits;
-when "live" it passes html to a Groq parser to extract structured events;
+when "live" it passes html to an Azure AI Foundry parser to extract structured events;
 when "error" it returns an empty events array to the caller.
 """
 
@@ -36,7 +36,7 @@ _WS_RE = re.compile(r"\s+")
 
 def slim_html(html: str, max_chars: int = 25000) -> str:
     """Strip scripts/styles/svg/head/comments and collapse whitespace so the
-    AI parser stays under Groq's TPM cap. The remaining markup is enough for
+    AI parser stays under Azure AI Foundry's TPM cap. The remaining markup is enough for
     Llama-3.3 to extract event names, dates, venues, etc."""
     if not html:
         return ""

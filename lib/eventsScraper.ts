@@ -59,7 +59,7 @@ function normalize(raw: RawScraperEvent): EventResult | null {
 
 /**
  * Calls the n8n "Google Events Scraper" workflow. The workflow runs a Playwright
- * fetch with stealth headers + viewport rotation, then asks Groq to extract
+ * fetch with stealth headers + viewport rotation, then asks Azure AI Foundry to extract
  * structured events from the rendered HTML. Returns [] on any failure so the
  * caller (the AI assistant tool) degrades gracefully.
  */

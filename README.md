@@ -101,7 +101,7 @@ Every Microsoft / external AI service used:
 
 | Service | Where it's used |
 |---|---|
-| **Azure AI Foundry** — Llama-3.3-70B-Instruct (serverless, OpenAI-compatible) | The reasoning engine for **all four swarm agents** and the conversational assistant (`lib/azureClient.ts`, `lib/aiClient.ts`). Azure-only — there is no Groq fallback. |
+| **Azure AI Foundry** — Llama-3.3-70B-Instruct (serverless, OpenAI-compatible) | The reasoning engine for **all four swarm agents** and the conversational assistant (`lib/azureClient.ts`, `lib/aiClient.ts`). |
 | Managed Redis (Upstash, `rediss://`) | The swarm "blackboard" — shared `SwarmState` persistence (`lib/redis.ts`). Any managed Redis works. |
 | **Azure AI Content Safety** | Integrated into the Critic agent as a configurable safety gate. |
 | Foursquare Places API | Real venue data for the Researcher (`lib/foursquareClient.ts`). |
@@ -156,7 +156,7 @@ All swarm endpoints require `Authorization: Bearer <JWT>`.
 - Or: **Node.js 20+** for local dev
 - A **Supabase** project and a **Redis** instance (managed `rediss://` works)
 - An **Azure AI Foundry** deployment (Llama-3.3-70B-Instruct or compatible)
-- API keys: Foursquare (venues); optional APNs (push), Ola Maps + n8n (automation)
+- API keys: Foursquare (venues); optional APNs (push), n8n (automation)
 
 ### Installation
 ```bash

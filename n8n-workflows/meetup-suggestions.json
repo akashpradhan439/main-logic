@@ -16,10 +16,7 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        240,
-        300
-      ],
+      "position": [240, 300],
       "webhookId": "meetup-suggestions"
     },
     {
@@ -49,10 +46,7 @@
       "name": "Verify Secret",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        460,
-        300
-      ]
+      "position": [460, 300]
     },
     {
       "parameters": {
@@ -75,49 +69,47 @@
       "name": "Fetch Context",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        680,
-        240
-      ]
+      "position": [680, 240]
     },
     {
       "parameters": {
-        "url": "https://api.olamaps.io/places/v1/nearbysearch",
+        "url": "https://places-api.foursquare.com/places/search",
         "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.FOURSQUARE_API_KEY }}"
+            },
+            {
+              "name": "X-Places-Api-Version",
+              "value": "2025-06-17"
+            }
+          ]
+        },
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
             {
-              "name": "location",
-              "value": "={{ $json.context.lat }},{{ $json.context.lng }}"
+              "name": "query",
+              "value": "cafe restaurant bar bakery"
             },
             {
-              "name": "types",
-              "value": "cafe,restaurant,bar,bakery"
+              "name": "ll",
+              "value": "={{ $json.context.lat }},{{ $json.context.lng }}"
             },
             {
               "name": "radius",
               "value": "2000"
             },
             {
-              "name": "rankBy",
-              "value": "popular"
-            },
-            {
               "name": "limit",
               "value": "15"
             },
             {
-              "name": "withCentroid",
-              "value": "true"
-            },
-            {
-              "name": "language",
-              "value": "en"
-            },
-            {
-              "name": "api_key",
-              "value": "={{ $env.OLA_MAPS_API_KEY }}"
+              "name": "fields",
+              "value": "fsq_place_id,name,location,geocodes,categories,rating,website"
             }
           ]
         },
@@ -125,41 +117,94 @@
           "timeout": 6000
         }
       },
-      "id": "ola-search",
-      "name": "Ola Maps Nearby Search",
+      "id": "foursquare-search",
+      "name": "Foursquare Places Search",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        900,
-        240
-      ],
+      "position": [900, 160],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "const olaResponse = $input.first().json;\nconst predictions = Array.isArray(olaResponse.predictions) ? olaResponse.predictions : [];\nconst context = $('Fetch Context').item.json.context;\n\nconst places = predictions.slice(0, 12).map(p => ({\n  name: p.structured_formatting?.main_text || p.description || 'Unnamed',\n  address: p.structured_formatting?.secondary_text || p.description || '',\n  distance_meters: p.distance_meters || 0,\n}));\n\nreturn [{ json: { context, places } }];"
+        "jsCode": "const fsqResponse = $input.first().json;\nconst results = Array.isArray(fsqResponse.results) ? fsqResponse.results : [];\nconst context = $('Fetch Context').item.json.context;\n\nconst places = results.slice(0, 12).map(r => {\n  const loc = r.location || {};\n  return {\n    name: r.name || 'Unnamed',\n    address: loc.formatted_address || '',\n    distance_meters: 0,\n  };\n});\n\nreturn [{ json: { context, places } }];"
       },
       "id": "normalize-places",
       "name": "Normalize Places",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1120,
-        240
-      ]
+      "position": [1120, 160]
     },
     {
       "parameters": {
-        "jsCode": "// === GENERATE + SUPERVISOR LOOP ===\n// Each connection carries: connectionId (stable), firstName (display), suggestionType, signals.\n// Detailed: { type, connectionId, connectionName, title, place, time, text }\n// One-liner: { type, connectionId, connectionName, text }\n// Identity = connectionId. firstName is display-only and may collide (e.g. two \"Yash\").\n\nconst input = $input.first().json;\nconst context = input.context;\nconst places = Array.isArray(input.places) ? input.places : [];\nlet connections = Array.isArray(context.connections) ? context.connections : [];\nconst languageLabel = (typeof context.languageLabel === 'string' && context.languageLabel.trim()) ? context.languageLabel.trim() : 'English';\nconst languageInstruction = languageLabel === 'English'\n  ? 'All user-facing text fields (title, place, time, text) MUST be written in English.'\n  : ('All user-facing text fields (title, time, text) MUST be written in ' + languageLabel + '. JSON keys, type values (\"detailed\"/\"one_liner\"), connectionId, and the place name (which is a real-world location label) MUST stay as-is. connectionName MUST stay exactly as provided (do not transliterate).');\n\n// Edge: no connections → return empty, no Groq calls.\n// Edge: no nearby places → force everyone to one_liner (detailed needs a real place).\nif (connections.length === 0) {\n  return [{ json: { suggestions: [], attempts: 0, approved: true, lastFeedback: 'no_connections' } }];\n}\nif (places.length === 0) {\n  connections = connections.map(c => ({ ...c, suggestionType: 'one_liner' }));\n}\n\n// LLM backend: Azure AI Foundry (OpenAI-compatible). Endpoint already ends in /openai/v1.\nconst GROQ_URL = ($env.AZURE_OPENAI_ENDPOINT || '').replace(/\\/$/, '') + '/chat/completions';\nconst GROQ_KEY = $env.AZURE_OPENAI_API_KEY;\nconst MODEL = $env.AZURE_OPENAI_DEPLOYMENT || 'Llama-3.3-70B-Instruct';\nconst MAX_ATTEMPTS = 4;\n\n// Banned phrases — block only unambiguous marketing-speak and AI-tells where\n// the assistant claims to perform tasks it can't. Natural turns of phrase\n// ('great spot', 'grab coffee', 'perfect for her', 'how about a walk') are\n// tolerated — the prompt still discourages clichés, but the deterministic gate\n// stays narrow so the supervisor can approve without burning every attempt.\nconst BANNED_PATTERNS = [\n  /\\bperfect (place|spot)\\b/i,\n  /\\bsounds? (great|perfect|fun)\\b/i,\n  /\\blet me (draft|plan|arrange)\\b/i,\n  /\\b(I'?ll|I will) (plan|draft|set up|arrange)\\b/i,\n];\n\nasync function groq(messages, temperature, maxTokens) {\n  return await this.helpers.httpRequest({\n    method: 'POST', url: GROQ_URL,\n    headers: { Authorization: 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' },\n    body: { model: MODEL, temperature, max_tokens: maxTokens, response_format: { type: 'json_object' }, messages },\n    json: true,\n  });\n}\n\nconst GENERATION_SYSTEM = [\n  \"You are the in-app planner that writes personalised meet-up cards for a privacy-first social app.\",\n  \"Voice: warm, specific, like a thoughtful friend who knows both people. Never marketing-speak. Never hedge.\",\n  languageInstruction,\n  \"\",\n  \"INPUT: a user + a list of their connections. Each connection has:\",\n  \"  connectionId (stable identifier — use this for identity)\",\n  \"  firstName (display name — may collide with other connections)\",\n  \"  bio, interests, sharedInterests (overlap with user), nearby (true/false)\",\n  \"  suggestionType: \\\"detailed\\\" or \\\"one_liner\\\" — you MUST match this per connection.\",\n  \"\",\n  \"OUTPUT one object per connection in {\\\"suggestions\\\":[...]}, matching suggestionType:\",\n  \"\",\n  \"DETAILED ({\\\"type\\\":\\\"detailed\\\", \\\"connectionId\\\", \\\"connectionName\\\", \\\"title\\\", \\\"place\\\", \\\"time\\\", \\\"text\\\"})\",\n  \"  title: 3-5 words, names the activity + person, references a real detail (\\\"Sunset photo walk with Aditya\\\", not \\\"Walk with Aditya\\\")\",\n  \"  place: EXACT name from the provided nearby spots list (character-for-character)\",\n  \"  time: human-readable like \\\"Tonight, 7:00 PM\\\" / \\\"Tomorrow, 6:30 PM\\\" / \\\"Saturday, 10:00 AM\\\". Choose activity-appropriate (dinner→evening, coffee→morning, walk→golden hour). Anchor to today's date.\",\n  \"  text: ONE sentence, 60-100 chars. Concrete hook tying the shared interest to the place or time. Must include connectionName. No question — it's already a plan.\",\n  \"\",\n  \"ONE_LINER ({\\\"type\\\":\\\"one_liner\\\", \\\"connectionId\\\", \\\"connectionName\\\", \\\"text\\\"})\",\n  \"  text: ONE sentence, 40-110 chars. Names a specific shared detail (interest, recent context, mutual taste) then ends with a soft invitation as a question. Must include connectionName.\",\n  \"\",\n  \"HARD RULES — failures will be rejected mechanically:\",\n  \"  • Use connectionId verbatim from input. Use the firstName from input for connectionName.\",\n  \"  • For detailed: place MUST be an exact name from nearby spots. No invented places.\",\n  \"  • text MUST contain connectionName.\",\n  \"  • Exactly ONE suggestion per connection — no duplicates, no skips.\",\n  \"  • Type MUST match the suggestionType assigned to that connection.\",\n  \"  • Vary opening words across the set (don't start every text with the name + comma).\",\n  \"\",\n  \"BANNED phrasing (will be auto-rejected): \\\"great atmosphere\\\", \\\"perfect spot\\\", \\\"sounds great\\\", \\\"fancy a\\\", \\\"hang out\\\", \\\"grab a coffee\\\", \\\"let me draft\\\", \\\"I'll plan\\\", \\\"would love to\\\".\",\n  \"\",\n  \"GOOD detailed examples (notice the specificity):\",\n  \"  {\\\"type\\\":\\\"detailed\\\",\\\"connectionId\\\":\\\"u_1\\\",\\\"connectionName\\\":\\\"Sam\\\",\\\"title\\\":\\\"Jazz dinner with Sam\\\",\\\"place\\\":\\\"Blue Tokai Coffee\\\",\\\"time\\\":\\\"Tonight, 7:00 PM\\\",\\\"text\\\":\\\"Sam's into live jazz — Blue Tokai has a Friday set you'd both love.\\\"}\",\n  \"  {\\\"type\\\":\\\"detailed\\\",\\\"connectionId\\\":\\\"u_2\\\",\\\"connectionName\\\":\\\"Maya\\\",\\\"title\\\":\\\"Pour-over with Maya\\\",\\\"place\\\":\\\"Cafe Loup\\\",\\\"time\\\":\\\"Tomorrow, 10:00 AM\\\",\\\"text\\\":\\\"Cafe Loup's slow pour matches Maya's thing for specialty roasts.\\\"}\",\n  \"\",\n  \"GOOD one_liner examples (notice the specific shared detail):\",\n  \"  {\\\"type\\\":\\\"one_liner\\\",\\\"connectionId\\\":\\\"u_3\\\",\\\"connectionName\\\":\\\"Priya\\\",\\\"text\\\":\\\"You and Priya both starred Lisbon — want me to draft a 3-day plan?\\\"}\",\n  \"  {\\\"type\\\":\\\"one_liner\\\",\\\"connectionId\\\":\\\"u_4\\\",\\\"connectionName\\\":\\\"Ram\\\",\\\"text\\\":\\\"Ram's back from his Himalayan trek — catch up over a long walk this week?\\\"}\",\n  \"\",\n  \"BAD examples (do NOT output anything like these):\",\n  \"  {\\\"text\\\":\\\"Coffee with Maya at Cafe Loup, sounds great!\\\"}  // banned phrase\",\n  \"  {\\\"text\\\":\\\"Aditya and you share a love for photography — Khanpur Shiv Park has great spots.\\\"}  // banned + vague\",\n  \"  {\\\"title\\\":\\\"Walk with Aditya\\\"}  // no specific detail\",\n].join(\"\\n\");\n\nconst SUPERVISOR_SYSTEM = [\n  \"You are a friendly editor doing a final sanity pass on meet-up suggestion cards before they reach the user.\",\n  (\"All user-facing text must read naturally in \" + languageLabel + \". Reject items where the language is wrong, mangled, or only partially translated.\"),\n  \"Default to APPROVED. Only REJECT when a suggestion has a clear, serious problem that would embarrass the app. Minor imperfections are fine — do not nitpick.\",\n  \"Serious problems worth rejecting:\",\n  \"\",\n  \"1. EMPTY/GENERIC — says nothing concrete at all (pure filler with no interest, place, or reason). A light shared detail is acceptable; only reject truly contentless text.\",\n  \"2. VOICE — reads like an ad or a robot (marketing-speak, exclamation spam). Ordinary friendly phrasing is fine.\",\n  \"3. BROKEN INTENT — clearly the wrong shape (e.g. a one_liner that is plainly not an invitation).\",\n  \"\",\n  \"Type/identity/place accuracy, length, question-mark format, and variety are already mechanically verified — do NOT re-check those.\",\n  \"\",\n  'Return ONLY: {\"verdict\":\"APPROVED\",\"feedback\":\"\"} or {\"verdict\":\"REJECTED\",\"feedback\":\"per-item: connectionId X — rule N — quote — fix\"}'\n].join(\"\\n\");\n\nconst placesForPrompt = places.map(p => ({ name: p.name, address: p.address, distance_m: p.distance_meters }));\nconst connectionsForPrompt = connections.map(c => ({\n  connectionId: c.userId,\n  firstName: c.firstName,\n  bio: c.bio,\n  interests: c.interests,\n  sharedInterests: c.signals ? c.signals.sharedInterests : [],\n  nearby: c.signals ? c.signals.nearby : false,\n  suggestionType: c.suggestionType,\n}));\n\n// Expected map: connectionId -> { firstName, suggestionType }\nconst expectedById = new Map();\nfor (const c of connectionsForPrompt) expectedById.set(c.connectionId, { firstName: c.firstName, type: c.suggestionType });\n\nlet lastSuggestions = [];\nlet feedback = '';\nlet approved = false;\nlet completedAttempts = 0;\n\nfor (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {\n  completedAttempts = attempt;\n  const feedbackBlock = feedback ? ('\\n\\nPREVIOUS ATTEMPT REJECTED. Address every item below:\\n' + feedback) : '';\n  const genUser = 'USER\\n  firstName: ' + context.firstName + '\\n  bio: ' + (context.bio || '(none)') + '\\n  interests: ' + JSON.stringify(context.interests) + '\\n  now: ' + context.timeOfDay + ', ' + context.date + '\\n\\nCONNECTIONS (each tagged with suggestionType — produce exactly one matching suggestion per connectionId):\\n' + JSON.stringify(connectionsForPrompt, null, 2) + '\\n\\nNEARBY SPOTS (use exact names for detailed.place):\\n' + JSON.stringify(placesForPrompt, null, 2) + feedbackBlock + '\\n\\nGenerate the suggestions JSON now.';\n\n  let genResp;\n  try {\n    genResp = await groq.call(this, [\n      { role: 'system', content: GENERATION_SYSTEM },\n      { role: 'user', content: genUser },\n    ], 0.85, 1024);\n  } catch (e) {\n    feedback = 'Generator call failed: ' + (e.message || String(e));\n    continue;\n  }\n\n  const genContent = genResp.choices?.[0]?.message?.content || '{}';\n  let parsed;\n  try { parsed = JSON.parse(genContent); } catch { parsed = {}; }\n  const suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : [];\n  lastSuggestions = suggestions;\n\n  if (suggestions.length === 0) {\n    feedback = 'Generator returned no suggestions';\n    continue;\n  }\n\n  // === DETERMINISTIC CHECKS ===\n  const detFeedback = [];\n  const knownSpots = new Set(placesForPrompt.map(p => p.name));\n  const seenPlaces = new Set();\n  const idCount = new Map();\n\n  for (const item of suggestions) {\n    if (!item || typeof item !== 'object') { detFeedback.push('NON-OBJECT: ' + JSON.stringify(item)); continue; }\n    const { type, connectionId, connectionName, text } = item;\n\n    if (type !== 'detailed' && type !== 'one_liner') { detFeedback.push('invalid type \"' + type + '\"'); continue; }\n    if (!connectionId || !expectedById.has(connectionId)) { detFeedback.push('unknown connectionId \"' + connectionId + '\" (valid: ' + Array.from(expectedById.keys()).join(', ') + ')'); continue; }\n\n    idCount.set(connectionId, (idCount.get(connectionId) || 0) + 1);\n    const expected = expectedById.get(connectionId);\n    if (type !== expected.type) detFeedback.push('connectionId ' + connectionId + ': type must be \"' + expected.type + '\" (got \"' + type + '\")');\n    if (connectionName !== expected.firstName) detFeedback.push('connectionId ' + connectionId + ': connectionName must be \"' + expected.firstName + '\" (got \"' + connectionName + '\")');\n\n    if (typeof text !== 'string' || !text.trim()) { detFeedback.push('connectionId ' + connectionId + ': empty text'); continue; }\n    if (!text.includes(connectionName)) detFeedback.push('connectionId ' + connectionId + ' (' + connectionName + '): text must mention name. Got: \"' + text + '\"');\n    if (text.length < 40 || text.length > 110) detFeedback.push('connectionId ' + connectionId + ': text length ' + text.length + ' outside 40-110 chars. Got: \"' + text + '\"');\n    for (const re of BANNED_PATTERNS) {\n      if (re.test(text)) {\n        detFeedback.push('connectionId ' + connectionId + ': BANNED phrase matching ' + re.source + ' in: \"' + text + '\"');\n        break;\n      }\n    }\n    if (type === 'detailed') {\n      const { title, place, time } = item;\n      if (typeof title !== 'string' || !title.trim()) detFeedback.push('connectionId ' + connectionId + ': missing title');\n      else {\n        const tw = title.trim().split(/\\s+/);\n        if (tw.length < 3 || tw.length > 6) detFeedback.push('connectionId ' + connectionId + ': title word count ' + tw.length + ' outside 3-6. Got: \"' + title + '\"');\n      }\n      if (typeof time !== 'string' || !time.trim()) detFeedback.push('connectionId ' + connectionId + ': missing time');\n      if (typeof place !== 'string' || !knownSpots.has(place)) {\n        detFeedback.push('connectionId ' + connectionId + ': place \"' + place + '\" not in nearby spots. Valid: ' + Array.from(knownSpots).join(' | '));\n      } else {\n        if (seenPlaces.has(place)) detFeedback.push('connectionId ' + connectionId + ': place \"' + place + '\" already used by another detailed suggestion — pick a different spot');\n        seenPlaces.add(place);\n      }\n      if (text.includes('?')) detFeedback.push('connectionId ' + connectionId + ': detailed text must not end with a question (it\\'s a plan, not a hook). Got: \"' + text + '\"');\n    }\n    if (type === 'one_liner') {\n      if (!text.trim().endsWith('?')) detFeedback.push('connectionId ' + connectionId + ': one_liner text must end with a question mark. Got: \"' + text + '\"');\n    }\n  }\n\n  // Exactly one per expected connectionId\n  for (const [id, meta] of expectedById.entries()) {\n    const n = idCount.get(id) || 0;\n    if (n === 0) detFeedback.push('MISSING: connectionId ' + id + ' (' + meta.firstName + ', ' + meta.type + ')');\n    else if (n > 1) detFeedback.push('DUPLICATE: connectionId ' + id + ' appears ' + n + ' times — exactly one allowed');\n  }\n\n  // Opening-word variety\n  const openings = suggestions.map(s => (s && typeof s.text === 'string') ? (s.text.trim().split(/[\\s,!?\\.]/)[0] || '').toLowerCase() : '').filter(Boolean);\n  const openingCount = new Map();\n  openings.forEach(o => openingCount.set(o, (openingCount.get(o) || 0) + 1));\n  for (const [o, n] of openingCount.entries()) {\n    if (n >= 3) detFeedback.push('OPENING VARIETY: \"' + o + '\" starts ' + n + ' texts — vary the opening word across suggestions');\n  }\n\n  if (detFeedback.length > 0) {\n    feedback = 'DETERMINISTIC CHECKS FAILED:\\n  - ' + detFeedback.join('\\n  - ');\n    continue;\n  }\n\n  // === LLM SUPERVISOR — subjective quality ===\n  const supUser = 'Suggestions to review (JSON below):\\n' + JSON.stringify(suggestions, null, 2) + '\\n\\nDeterministic checks (identity, types, fields, length, banned phrases, opening variety) already passed. Judge ONLY the 5 subjective rules. Respond with JSON in the format specified.';\n  let supResp;\n  try {\n    supResp = await groq.call(this, [\n      { role: 'system', content: SUPERVISOR_SYSTEM },\n      { role: 'user', content: supUser },\n    ], 0.1, 600);\n  } catch (e) {\n    feedback = 'Supervisor call failed: ' + (e.message || String(e));\n    continue;\n  }\n\n  const supContent = supResp.choices?.[0]?.message?.content || '{}';\n  let verdict;\n  try { verdict = JSON.parse(supContent); } catch { verdict = { verdict: 'REJECTED', feedback: 'Supervisor returned invalid JSON' }; }\n\n  if (typeof verdict.verdict === 'string' && verdict.verdict.toUpperCase() === 'APPROVED') {\n    approved = true;\n    break;\n  }\n  feedback = verdict.feedback || 'No specific supervisor feedback';\n}\n\n// Fallback: even if not approved, return the best-effort attempt so the UI has something to show.\n// Client can read approved=false and decide to hide/dim the cards.\nreturn [{ json: { suggestions: lastSuggestions, attempts: completedAttempts, approved, lastFeedback: feedback } }];"
+        "method": "POST",
+        "url": "={{ $env.N8N_EVENTS_SCRAPER_WEBHOOK_URL }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": {{ JSON.stringify(($json.context.interests || []).slice(0, 3).join(' ') || 'events near me') }},\n  \"location\": \"{{ $json.context.lat }},{{ $json.context.lng }}\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "events-scraper-call",
+      "name": "Events Scraper Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 380],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.first().json || {};\nconst events = Array.isArray(resp.events) ? resp.events : [];\nreturn [{ json: { events: events.slice(0, 10) } }];"
+      },
+      "id": "normalize-events",
+      "name": "Normalize Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 380]
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1280, 270]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst fsqItem = items.find(i => i.json.places !== undefined) || { json: { context: {}, places: [] } };\nconst eventsItem = items.find(i => i.json.events !== undefined) || { json: { events: [] } };\nreturn [{ json: {\n  context: fsqItem.json.context,\n  places: fsqItem.json.places || [],\n  events: eventsItem.json.events || []\n}}];"
+      },
+      "id": "prepare-input",
+      "name": "Prepare Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 270]
+    },
+    {
+      "parameters": {
+        "jsCode": "// === GENERATE + SUPERVISOR LOOP ===\n// Each connection carries: connectionId (stable), firstName (display), suggestionType, signals.\n// Detailed: { type, connectionId, connectionName, title, place, time, text }\n// One-liner: { type, connectionId, connectionName, text }\n// Identity = connectionId. firstName is display-only and may collide (e.g. two \"Yash\").\n\nconst input = $input.first().json;\nconst context = input.context;\nconst places = Array.isArray(input.places) ? input.places : [];\nconst events = Array.isArray(input.events) ? input.events : [];\nlet connections = Array.isArray(context.connections) ? context.connections : [];\nconst languageLabel = (typeof context.languageLabel === 'string' && context.languageLabel.trim()) ? context.languageLabel.trim() : 'English';\nconst languageInstruction = languageLabel === 'English'\n  ? 'All user-facing text fields (title, place, time, text) MUST be written in English.'\n  : ('All user-facing text fields (title, time, text) MUST be written in ' + languageLabel + '. JSON keys, type values (\"detailed\"/\"one_liner\"), connectionId, and the place name (which is a real-world location label) MUST stay as-is. connectionName MUST stay exactly as provided (do not transliterate).');\n\n// Edge: no connections -> return empty, no LLM calls.\n// Edge: no nearby places -> force everyone to one_liner (detailed needs a real place).\nif (connections.length === 0) {\n  return [{ json: { suggestions: [], attempts: 0, approved: true, lastFeedback: 'no_connections' } }];\n}\nif (places.length === 0) {\n  connections = connections.map(c => ({ ...c, suggestionType: 'one_liner' }));\n}\n\n// LLM backend: Azure AI Foundry (OpenAI-compatible). Endpoint already ends in /openai/v1.\nconst LLM_URL = ($env.AZURE_OPENAI_ENDPOINT || '').replace(/\\/$/, '') + '/chat/completions';\nconst LLM_KEY = $env.AZURE_OPENAI_API_KEY;\nconst MODEL = $env.AZURE_OPENAI_DEPLOYMENT || 'Llama-3.3-70B-Instruct';\nconst MAX_ATTEMPTS = 4;\n\nconst BANNED_PATTERNS = [\n  /\\bperfect (place|spot)\\b/i,\n  /\\bsounds? (great|perfect|fun)\\b/i,\n  /\\blet me (draft|plan|arrange)\\b/i,\n  /\\b(I'?ll|I will) (plan|draft|set up|arrange)\\b/i,\n];\n\nasync function llm(messages, temperature, maxTokens) {\n  return await this.helpers.httpRequest({\n    method: 'POST', url: LLM_URL,\n    headers: { Authorization: 'Bearer ' + LLM_KEY, 'Content-Type': 'application/json' },\n    body: { model: MODEL, temperature, max_tokens: maxTokens, response_format: { type: 'json_object' }, messages },\n    json: true,\n  });\n}\n\nconst GENERATION_SYSTEM = [\n  \"You are the in-app planner that writes personalised meet-up cards for a privacy-first social app.\",\n  \"Voice: warm, specific, like a thoughtful friend who knows both people. Never marketing-speak. Never hedge.\",\n  languageInstruction,\n  \"\",\n  \"INPUT: a user + a list of their connections. Each connection has:\",\n  \"  connectionId (stable identifier -- use this for identity)\",\n  \"  firstName (display name -- may collide with other connections)\",\n  \"  bio, interests, sharedInterests (overlap with user), nearby (true/false)\",\n  \"  suggestionType: \\\"detailed\\\" or \\\"one_liner\\\" -- you MUST match this per connection.\",\n  \"\",\n  \"OUTPUT one object per connection in {\\\"suggestions\\\":[...]}, matching suggestionType:\",\n  \"\",\n  \"DETAILED ({\\\"type\\\":\\\"detailed\\\", \\\"connectionId\\\", \\\"connectionName\\\", \\\"title\\\", \\\"place\\\", \\\"time\\\", \\\"text\\\"})\",\n  \"  title: 3-5 words, names the activity + person, references a real detail\",\n  \"  place: EXACT name from the provided nearby spots list (character-for-character)\",\n  \"  time: human-readable like \\\"Tonight, 7:00 PM\\\" / \\\"Tomorrow, 6:30 PM\\\" / \\\"Saturday, 10:00 AM\\\". Anchor to today's date.\",\n  \"  text: ONE sentence, 60-100 chars. Concrete hook tying the shared interest to the place or time. Must include connectionName. No question -- it's already a plan.\",\n  \"\",\n  \"ONE_LINER ({\\\"type\\\":\\\"one_liner\\\", \\\"connectionId\\\", \\\"connectionName\\\", \\\"text\\\"})\",\n  \"  text: ONE sentence, 40-110 chars. Names a specific shared detail then ends with a soft invitation as a question. Must include connectionName.\",\n  \"\",\n  \"HARD RULES -- failures will be rejected mechanically:\",\n  \"  Use connectionId verbatim from input. Use the firstName from input for connectionName.\",\n  \"  For detailed: place MUST be an exact name from nearby spots. No invented places.\",\n  \"  text MUST contain connectionName.\",\n  \"  Exactly ONE suggestion per connection -- no duplicates, no skips.\",\n  \"  Type MUST match the suggestionType assigned to that connection.\",\n  \"  Vary opening words across the set (don't start every text with the name + comma).\",\n  \"\",\n  \"EVENTS: a list of real upcoming events near the user. Each has: title, date, time, venue, address, price.\",\n  \"You MAY reference a real event in a detailed suggestion if it fits the connection's interests -- e.g. \\\"There's a jazz night at Blue Tokai this Saturday you'd both love.\\\" Only reference events that exist in the input list. Never invent events.\",\n  \"\",\n  \"BANNED phrasing (will be auto-rejected): \\\"great atmosphere\\\", \\\"perfect spot\\\", \\\"sounds great\\\", \\\"fancy a\\\", \\\"hang out\\\", \\\"grab a coffee\\\", \\\"let me draft\\\", \\\"I'll plan\\\", \\\"would love to\\\".\",\n].join(\"\\n\");\n\nconst SUPERVISOR_SYSTEM = [\n  \"You are a friendly editor doing a final sanity pass on meet-up suggestion cards before they reach the user.\",\n  (\"All user-facing text must read naturally in \" + languageLabel + \". Reject items where the language is wrong, mangled, or only partially translated.\"),\n  \"Default to APPROVED. Only REJECT when a suggestion has a clear, serious problem that would embarrass the app. Minor imperfections are fine -- do not nitpick.\",\n  \"Serious problems worth rejecting:\",\n  \"\",\n  \"1. EMPTY/GENERIC -- says nothing concrete at all (pure filler with no interest, place, or reason).\",\n  \"2. VOICE -- reads like an ad or a robot (marketing-speak, exclamation spam). Ordinary friendly phrasing is fine.\",\n  \"3. BROKEN INTENT -- clearly the wrong shape (e.g. a one_liner that is plainly not an invitation).\",\n  \"\",\n  \"Type/identity/place accuracy, length, question-mark format, and variety are already mechanically verified -- do NOT re-check those.\",\n  'Return ONLY: {\"verdict\":\"APPROVED\",\"feedback\":\"\"} or {\"verdict\":\"REJECTED\",\"feedback\":\"per-item: connectionId X -- rule N -- quote -- fix\"}'\n].join(\"\\n\");\n\nconst placesForPrompt = places.map(p => ({ name: p.name, address: p.address, distance_m: p.distance_meters }));\nconst eventsForPrompt = events.map(e => ({\n  title: e.title, date: e.date, time: e.time, venue: e.venue, address: e.address, price: e.price\n}));\nconst connectionsForPrompt = connections.map(c => ({\n  connectionId: c.userId,\n  firstName: c.firstName,\n  bio: c.bio,\n  interests: c.interests,\n  sharedInterests: c.signals ? c.signals.sharedInterests : [],\n  nearby: c.signals ? c.signals.nearby : false,\n  suggestionType: c.suggestionType,\n}));\n\nconst expectedById = new Map();\nfor (const c of connectionsForPrompt) expectedById.set(c.connectionId, { firstName: c.firstName, type: c.suggestionType });\n\nlet lastSuggestions = [];\nlet feedback = '';\nlet approved = false;\nlet completedAttempts = 0;\n\nfor (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {\n  completedAttempts = attempt;\n  const feedbackBlock = feedback ? ('\\n\\nPREVIOUS ATTEMPT REJECTED. Address every item below:\\n' + feedback) : '';\n  let genUser = 'USER\\n  firstName: ' + context.firstName + '\\n  bio: ' + (context.bio || '(none)') + '\\n  interests: ' + JSON.stringify(context.interests) + '\\n  now: ' + context.timeOfDay + ', ' + context.date;\n  genUser += '\\n\\nCONNECTIONS (each tagged with suggestionType -- produce exactly one matching suggestion per connectionId):\\n' + JSON.stringify(connectionsForPrompt, null, 2);\n  genUser += '\\n\\nNEARBY SPOTS (use exact names for detailed.place):\\n' + JSON.stringify(placesForPrompt, null, 2);\n  if (eventsForPrompt.length > 0) {\n    genUser += '\\n\\nUPCOMING EVENTS (may reference in detailed suggestions if relevant):\\n' + JSON.stringify(eventsForPrompt, null, 2);\n  }\n  genUser += feedbackBlock + '\\n\\nGenerate the suggestions JSON now.';\n\n  let genResp;\n  try {\n    genResp = await llm.call(this, [\n      { role: 'system', content: GENERATION_SYSTEM },\n      { role: 'user', content: genUser },\n    ], 0.85, 1024);\n  } catch (e) {\n    feedback = 'Generator call failed: ' + (e.message || String(e));\n    continue;\n  }\n\n  const genContent = genResp.choices?.[0]?.message?.content || '{}';\n  let parsed;\n  try { parsed = JSON.parse(genContent); } catch { parsed = {}; }\n  const suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : [];\n  lastSuggestions = suggestions;\n\n  if (suggestions.length === 0) {\n    feedback = 'Generator returned no suggestions';\n    continue;\n  }\n\n  // === DETERMINISTIC CHECKS ===\n  const detFeedback = [];\n  const knownSpots = new Set(placesForPrompt.map(p => p.name));\n  const seenPlaces = new Set();\n  const idCount = new Map();\n\n  for (const item of suggestions) {\n    if (!item || typeof item !== 'object') { detFeedback.push('NON-OBJECT: ' + JSON.stringify(item)); continue; }\n    const { type, connectionId, connectionName, text } = item;\n\n    if (type !== 'detailed' && type !== 'one_liner') { detFeedback.push('invalid type \"' + type + '\"'); continue; }\n    if (!connectionId || !expectedById.has(connectionId)) { detFeedback.push('unknown connectionId \"' + connectionId + '\" (valid: ' + Array.from(expectedById.keys()).join(', ') + ')'); continue; }\n\n    idCount.set(connectionId, (idCount.get(connectionId) || 0) + 1);\n    const expected = expectedById.get(connectionId);\n    if (type !== expected.type) detFeedback.push('connectionId ' + connectionId + ': type must be \"' + expected.type + '\" (got \"' + type + '\")');\n    if (connectionName !== expected.firstName) detFeedback.push('connectionId ' + connectionId + ': connectionName must be \"' + expected.firstName + '\" (got \"' + connectionName + '\")');\n\n    if (typeof text !== 'string' || !text.trim()) { detFeedback.push('connectionId ' + connectionId + ': empty text'); continue; }\n    if (!text.includes(connectionName)) detFeedback.push('connectionId ' + connectionId + ' (' + connectionName + '): text must mention name. Got: \"' + text + '\"');\n    if (text.length < 40 || text.length > 110) detFeedback.push('connectionId ' + connectionId + ': text length ' + text.length + ' outside 40-110 chars. Got: \"' + text + '\"');\n    for (const re of BANNED_PATTERNS) {\n      if (re.test(text)) {\n        detFeedback.push('connectionId ' + connectionId + ': BANNED phrase matching ' + re.source + ' in: \"' + text + '\"');\n        break;\n      }\n    }\n    if (type === 'detailed') {\n      const { title, place, time } = item;\n      if (typeof title !== 'string' || !title.trim()) detFeedback.push('connectionId ' + connectionId + ': missing title');\n      else {\n        const tw = title.trim().split(/\\s+/);\n        if (tw.length < 3 || tw.length > 6) detFeedback.push('connectionId ' + connectionId + ': title word count ' + tw.length + ' outside 3-6. Got: \"' + title + '\"');\n      }\n      if (typeof time !== 'string' || !time.trim()) detFeedback.push('connectionId ' + connectionId + ': missing time');\n      if (typeof place !== 'string' || !knownSpots.has(place)) {\n        detFeedback.push('connectionId ' + connectionId + ': place \"' + place + '\" not in nearby spots. Valid: ' + Array.from(knownSpots).join(' | '));\n      } else {\n        if (seenPlaces.has(place)) detFeedback.push('connectionId ' + connectionId + ': place \"' + place + '\" already used by another detailed suggestion -- pick a different spot');\n        seenPlaces.add(place);\n      }\n      if (text.includes('?')) detFeedback.push('connectionId ' + connectionId + ': detailed text must not end with a question (it\\'s a plan, not a hook). Got: \"' + text + '\"');\n    }\n    if (type === 'one_liner') {\n      if (!text.trim().endsWith('?')) detFeedback.push('connectionId ' + connectionId + ': one_liner text must end with a question mark. Got: \"' + text + '\"');\n    }\n  }\n\n  for (const [id, meta] of expectedById.entries()) {\n    const n = idCount.get(id) || 0;\n    if (n === 0) detFeedback.push('MISSING: connectionId ' + id + ' (' + meta.firstName + ', ' + meta.type + ')');\n    else if (n > 1) detFeedback.push('DUPLICATE: connectionId ' + id + ' appears ' + n + ' times -- exactly one allowed');\n  }\n\n  const openings = suggestions.map(s => (s && typeof s.text === 'string') ? (s.text.trim().split(/[\\s,!?\\.]/)[0] || '').toLowerCase() : '').filter(Boolean);\n  const openingCount = new Map();\n  openings.forEach(o => openingCount.set(o, (openingCount.get(o) || 0) + 1));\n  for (const [o, n] of openingCount.entries()) {\n    if (n >= 3) detFeedback.push('OPENING VARIETY: \"' + o + '\" starts ' + n + ' texts -- vary the opening word across suggestions');\n  }\n\n  if (detFeedback.length > 0) {\n    feedback = 'DETERMINISTIC CHECKS FAILED:\\n  - ' + detFeedback.join('\\n  - ');\n    continue;\n  }\n\n  // === LLM SUPERVISOR ===\n  const supUser = 'Suggestions to review (JSON below):\\n' + JSON.stringify(suggestions, null, 2) + '\\n\\nDeterministic checks already passed. Judge ONLY subjective quality. Respond with JSON in the format specified.';\n  let supResp;\n  try {\n    supResp = await llm.call(this, [\n      { role: 'system', content: SUPERVISOR_SYSTEM },\n      { role: 'user', content: supUser },\n    ], 0.1, 600);\n  } catch (e) {\n    feedback = 'Supervisor call failed: ' + (e.message || String(e));\n    continue;\n  }\n\n  const supContent = supResp.choices?.[0]?.message?.content || '{}';\n  let verdict;\n  try { verdict = JSON.parse(supContent); } catch { verdict = { verdict: 'REJECTED', feedback: 'Supervisor returned invalid JSON' }; }\n\n  if (typeof verdict.verdict === 'string' && verdict.verdict.toUpperCase() === 'APPROVED') {\n    approved = true;\n    break;\n  }\n  feedback = verdict.feedback || 'No specific supervisor feedback';\n}\n\nreturn [{ json: { suggestions: lastSuggestions, attempts: completedAttempts, approved, lastFeedback: feedback } }];"
       },
       "id": "generate-supervise",
       "name": "Generate + Supervisor Loop",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1340,
-        240
-      ]
+      "position": [1620, 270]
     },
     {
       "parameters": {
@@ -169,10 +214,7 @@
       "name": "Build Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1560,
-        240
-      ]
+      "position": [1840, 270]
     },
     {
       "parameters": {
@@ -183,10 +225,7 @@
       "name": "Respond Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        1780,
-        240
-      ]
+      "position": [2060, 270]
     },
     {
       "parameters": {
@@ -198,10 +237,7 @@
       "name": "Respond Unauthorized",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        680,
-        420
-      ]
+      "position": [680, 420]
     }
   ],
   "connections": {
@@ -238,14 +274,21 @@
       "main": [
         [
           {
-            "node": "Ola Maps Nearby Search",
+            "node": "Foursquare Places Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Events Scraper Call",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Ola Maps Nearby Search": {
+    "Foursquare Places Search": {
       "main": [
         [
           {
@@ -256,7 +299,51 @@
         ]
       ]
     },
+    "Events Scraper Call": {
+      "main": [
+        [
+          {
+            "node": "Normalize Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Normalize Places": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Events": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Prepare Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Input": {
       "main": [
         [
           {

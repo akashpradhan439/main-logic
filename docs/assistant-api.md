@@ -7,7 +7,7 @@ A conversational assistant personalized to each user (name, bio, interests, H3 l
 | Card type      | Source                                              | UI shape                                  |
 |----------------|-----------------------------------------------------|-------------------------------------------|
 | `places`       | Foursquare Places API                               | Horizontally scrollable list of place tiles |
-| `events`       | Google Events (via n8n + Playwright + Groq parser)  | Vertical list of event tiles               |
+| `events`       | Google Events (via n8n + Playwright + Azure AI Foundry parser)  | Vertical list of event tiles               |
 | `place_detail` | Foursquare Places API (`/places/{id}`)              | Full-bleed detail sheet (one place)        |
 | `connections`  | Supabase (the user's accepted connections)          | Chooser list when a named connection is ambiguous |
 | `people`       | Supabase (people physically near the user, not yet connected) | Chooser/discovery list ("who's around me") |
@@ -428,7 +428,7 @@ Possible field keys: `message`, `placeId`, `connectionUserId`, `personUserId`, `
 
 Returned when:
 - The user row could not be fetched from Supabase.
-- The Groq API call failed for a reason other than `tool_use_failed` (which is handled internally with a graceful fallback).
+- The Azure AI Foundry API call failed for a reason other than `tool_use_failed` (which is handled internally with a graceful fallback).
 - Any other unhandled exception.
 
 > The DB insert failing is **not** a 500. The server still returns 200 with `messageId: null` and a valid `reply`/`cards`. Client must handle `messageId === null`.
@@ -875,15 +875,15 @@ A turn with `cards: []` means the model decided no tool was needed (general advi
 ### Loading state UX
 
 A typical turn takes:
-- **Text-only reply:** ~3 s (single Groq pass-1 call).
-- **Tap UX (`placeId`):** ~3 s (single Groq pass-1 call + sync Foursquare details).
-- **Places / events / combined:** ~10–25 s (Groq pass-1 → tool fan-out → Groq pass-2). Events can be slower than places because of the Playwright fetch.
+- **Text-only reply:** ~3 s (single Azure AI Foundry pass-1 call).
+- **Tap UX (`placeId`):** ~3 s (single Azure AI Foundry pass-1 call + sync Foursquare details).
+- **Places / events / combined:** ~10–25 s (Azure AI Foundry pass-1 → tool fan-out → pass-2). Events can be slower than places because of the Playwright fetch.
 
 Show a typing indicator until the response arrives. Don't time out before 30 s.
 
 ### Rate-limiting note (graceful degradation)
 
-The platform uses Groq's free tier; the events parser shares the user's TPM budget. When the parser hits a 429, the server gracefully returns `cards: []` instead of failing the turn. The reply text will still be coherent. No special client handling required.
+The platform uses Azure AI Foundry; the events parser shares the user's TPM budget. When the parser hits a 429, the server gracefully returns `cards: []` instead of failing the turn. The reply text will still be coherent. No special client handling required.
 
 ---
 
