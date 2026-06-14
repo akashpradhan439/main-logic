@@ -46,7 +46,7 @@ async function initSession() {
     }
     const data = await resp.json();
     const u = data.user || {};
-    const flow = u.toName ? `${u.fullName || u.firstName} → ${u.toName}` : (u.fullName || u.firstName || "user");
+    const flow = u.fullName || u.firstName || "user";
     $("#session-info").textContent =
       `${flow} · ${u.language || currentLang} · ${data.provider}/${data.deployment}` + (u.hasLocation ? " · 📍" : "");
   } catch (e) {
@@ -67,7 +67,16 @@ if (langSelect) {
     try { await api("api/assistant/reset", { method: "POST" }); } catch (e) {}
     $(`.chat[data-chat="assistant"]`).innerHTML = "";
     logEl("assistant").innerHTML = "";
-    ["connections", "meetup"].forEach((t) => clearTab(t));
+    ["connections", "meetup"].forEach((t) => {
+      clearTab(t);
+      const container = document.getElementById(`conn-picker-${t}`);
+      if (container) {
+        container.querySelector(".conn-search-input").value = "";
+        container.querySelector(".conn-id-input").value = "";
+        container.querySelector(".conn-clear-btn").style.display = "none";
+        container.querySelector(".conn-dropdown-results").style.display = "none";
+      }
+    });
     await initSession();
   });
 }
@@ -108,6 +117,13 @@ function setRunning(tab, running) {
   const stopBtn = $(`.stop-btn[data-stop="${tab}"]`);
   if (runBtn) { runBtn.disabled = running; runBtn.textContent = running ? "Running…" : "Run swarm"; }
   if (stopBtn) stopBtn.disabled = !running;
+  const pickerContainer = document.getElementById(`conn-picker-${tab}`);
+  if (pickerContainer) {
+    const input = pickerContainer.querySelector(".conn-search-input");
+    const clearBtn = pickerContainer.querySelector(".conn-clear-btn");
+    input.disabled = running;
+    if (clearBtn) clearBtn.style.pointerEvents = running ? "none" : "auto";
+  }
 }
 
 function runSwarm(tab) {
@@ -116,7 +132,13 @@ function runSwarm(tab) {
   setRunning(tab, true);
   logLine(tab, "system", "Opening swarm stream…");
 
-  const url = `api/swarm/${tab}/stream?token=${encodeURIComponent(token)}&lang=${encodeURIComponent(currentLang)}`;
+  const pickerContainer = document.getElementById(`conn-picker-${tab}`);
+  const connectionId = pickerContainer ? pickerContainer.querySelector(".conn-id-input").value : "";
+
+  let url = `api/swarm/${tab}/stream?token=${encodeURIComponent(token)}&lang=${encodeURIComponent(currentLang)}`;
+  if (connectionId) {
+    url += `&connectionId=${encodeURIComponent(connectionId)}`;
+  }
   const es = new EventSource(url);
   swarmState[tab] = { es, streamId: null, running: true };
 
@@ -208,7 +230,8 @@ function renderSwarmResult(tab, m) {
 
   const list = r.meetupSuggestions || r.connectionSuggestions || [];
   if (list.length === 0) {
-    box.appendChild(el("p", "muted", "No suggestions produced."));
+    const msg = m.feedback ? `No suggestions: ${m.feedback}` : "No suggestions produced.";
+    box.appendChild(el("p", "muted", msg));
     return;
   }
   list.forEach((s) => {
@@ -406,5 +429,97 @@ $(`[data-reset="assistant"]`).addEventListener("click", async () => {
   logLine("assistant", "system", "Conversation reset.");
 });
 
+// ─── Connection Picker Autocomplete ───────────────────────────────────────────
+function setupConnectionPicker(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const input = container.querySelector(".conn-search-input");
+  const hiddenInput = container.querySelector(".conn-id-input");
+  const clearBtn = container.querySelector(".conn-clear-btn");
+  const dropdown = container.querySelector(".conn-dropdown-results");
+
+  let currentResults = [];
+
+  function hideDropdown() {
+    dropdown.style.display = "none";
+    dropdown.innerHTML = "";
+  }
+
+  function clearSelection() {
+    input.value = "";
+    hiddenInput.value = "";
+    clearBtn.style.display = "none";
+    hideDropdown();
+  }
+
+  clearBtn.addEventListener("click", clearSelection);
+
+  let debounceTimer;
+  input.addEventListener("input", () => {
+    const q = input.value.trim();
+    if (!q) {
+      clearSelection();
+      return;
+    }
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(async () => {
+      try {
+        const resp = await api(`api/connections/search?q=${encodeURIComponent(q)}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        currentResults = data.connections || [];
+        renderResults(currentResults);
+      } catch (e) {
+        console.error("error searching connections", e);
+      }
+    }, 200);
+  });
+
+  function renderResults(results) {
+    dropdown.innerHTML = "";
+    if (results.length === 0) {
+      const item = el("div", "conn-item no-results", "No connections found");
+      dropdown.appendChild(item);
+    } else {
+      results.forEach((itemData) => {
+        const item = el("div", "conn-item", itemData.fullName || itemData.firstName);
+        item.addEventListener("click", () => {
+          selectItem(itemData);
+        });
+        dropdown.appendChild(item);
+      });
+    }
+    dropdown.style.display = "block";
+  }
+
+  function selectItem(itemData) {
+    input.value = itemData.fullName || itemData.firstName;
+    hiddenInput.value = itemData.id;
+    clearBtn.style.display = "block";
+    hideDropdown();
+  }
+
+  document.addEventListener("click", (e) => {
+    if (!container.contains(e.target)) {
+      hideDropdown();
+    }
+  });
+
+  input.addEventListener("focus", async () => {
+    const q = input.value.trim();
+    try {
+      const resp = await api(`api/connections/search?q=${encodeURIComponent(q)}`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      currentResults = data.connections || [];
+      renderResults(currentResults);
+    } catch (e) {
+      console.error(e);
+    }
+  });
+}
+
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 initSession();
+setupConnectionPicker("conn-picker-connections");
+setupConnectionPicker("conn-picker-meetup");

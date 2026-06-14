@@ -462,7 +462,7 @@ async function handleSwarmStream(
   request: http.IncomingMessage,
   taskType: "meetup" | "connections"
 ): Promise<void> {
-  const { runSwarm, SwarmAbortError, config, agentLLMClient } = await loadLibs();
+  const { runSwarm, SwarmAbortError, config, agentLLMClient, supabase } = await loadLibs();
   sseInit(res);
   const streamId = randomUUID();
   const controller = new AbortController();
@@ -477,14 +477,33 @@ async function handleSwarmStream(
 
   try {
     const user = await getDemoUser(langOf(request));
+    const url = new URL(request.url || "/", "http://localhost");
+    const connectionId = url.searchParams.get("connectionId") || null;
+
+    let targetName: string | null = null;
+    if (connectionId) {
+      const { data: targetUser } = await supabase
+        .from("users")
+        .select("first_name, last_name")
+        .eq("id", connectionId)
+        .limit(1);
+      const tu = (targetUser ?? [])[0];
+      if (tu) {
+        targetName = [tu.first_name, tu.last_name].filter(Boolean).join(" ");
+      }
+    }
+
+    const modeText = targetName ? `planning with ${targetName}` : "evaluating all connections";
+
     sseSend(res, {
       type: "agent",
       agent: "planner",
-      message: `From "${user.fullName}"${user.withName ? ` → planning toward ${user.withName}` : ""} · lang=${user.language} · provider=${agentLLMClient.provider} (${config.azureOpenAIDeployment})`,
+      message: `From "${user.fullName}" (${modeText}) · lang=${user.language} · provider=${agentLLMClient.provider} (${config.azureOpenAIDeployment})`,
     });
     await runSwarm({
       userId: user.id,
       taskType,
+      targetConnectionId: connectionId,
       foursquareApiKey: config.foursquareApiKey,
       hooks: {
         emit: (e) => sseSend(res, e),
@@ -517,6 +536,55 @@ async function handleStop(res: http.ServerResponse, request: http.IncomingMessag
     return sendJson(res, 200, { success: true, stopped: true });
   }
   return sendJson(res, 200, { success: true, stopped: false });
+}
+
+async function handleConnectionsSearch(res: http.ServerResponse, request: http.IncomingMessage): Promise<void> {
+  try {
+    const { supabase } = await loadLibs();
+    const user = await getDemoUser(langOf(request));
+    const url = new URL(request.url || "/", "http://localhost");
+    const query = (url.searchParams.get("q") || "").trim().toLowerCase();
+
+    // Fetch accepted connections
+    const { data: connRows } = await supabase
+      .from("connections")
+      .select("requester_id, addressee_id")
+      .eq("status", "accepted")
+      .or(`requester_id.eq.${user.id},addressee_id.eq.${user.id}`);
+
+    const partnerIds = (connRows ?? []).map((r) =>
+      r.requester_id === user.id ? r.addressee_id : r.requester_id
+    ) as string[];
+
+    if (partnerIds.length === 0) {
+      return sendJson(res, 200, { success: true, connections: [] });
+    }
+
+    const { data: partners } = await supabase
+      .from("users")
+      .select("id, first_name, last_name")
+      .in("id", partnerIds);
+
+    const formatted = (partners ?? []).map((p) => ({
+      id: p.id,
+      firstName: p.first_name || "",
+      lastName: p.last_name || "",
+      fullName: [p.first_name, p.last_name].filter(Boolean).join(" "),
+    }));
+
+    const filtered = query
+      ? formatted.filter(
+          (p) =>
+            p.fullName.toLowerCase().includes(query) ||
+            p.firstName.toLowerCase().includes(query) ||
+            p.lastName.toLowerCase().includes(query)
+        )
+      : formatted;
+
+    return sendJson(res, 200, { success: true, connections: filtered });
+  } catch (err) {
+    return sendJson(res, 500, { success: false, error: String(err) });
+  }
 }
 
 async function handleAssistantStream(res: http.ServerResponse, request: http.IncomingMessage): Promise<void> {
@@ -694,6 +762,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 401, { success: false, error: "unauthorized" });
       }
       if (pathname === "/api/session" && method === "GET") return await handleSession(res, req);
+      if (pathname === "/api/connections/search" && method === "GET") return await handleConnectionsSearch(res, req);
       if (pathname === "/api/swarm/connections/stream" && method === "GET")
         return await handleSwarmStream(res, req, "connections");
       if (pathname === "/api/swarm/meetup/stream" && method === "GET")

@@ -101,15 +101,11 @@
             },
             {
               "name": "radius",
-              "value": "2000"
+              "value": "5000"
             },
             {
               "name": "limit",
               "value": "15"
-            },
-            {
-              "name": "fields",
-              "value": "fsq_place_id,name,location,geocodes,categories,rating,website"
             }
           ]
         },

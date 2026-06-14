@@ -179,3 +179,69 @@ code { background: #eef2fb; padding: 1px 6px; border-radius: 5px; color: #1d4ed8
 .chat-input input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
 .chat-input button { background: var(--accent); color: #fff; border: 0; border-radius: 10px; padding: 0 18px; font-weight: 600; cursor: pointer; }
 .chat-input button:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ─── Connection Picker ─────────────────────────────────────────────────── */
+.connection-picker-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.conn-search-input {
+  background: #fff;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 9px;
+  padding: 8px 12px;
+  font-size: 13px;
+  outline: none;
+  min-width: 220px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.conn-search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+.conn-dropdown-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-top: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(30, 41, 59, 0.12);
+  z-index: 10;
+}
+.conn-item {
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: left;
+}
+.conn-item:hover {
+  background: var(--panel-2);
+  color: var(--accent);
+}
+.conn-item.no-results {
+  color: var(--muted);
+  cursor: default;
+}
+.conn-clear-btn {
+  position: absolute;
+  right: 8px;
+  background: transparent;
+  border: 0;
+  font-size: 16px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  line-height: 1;
+}
+.conn-clear-btn:hover {
+  color: var(--critic);
+}
+

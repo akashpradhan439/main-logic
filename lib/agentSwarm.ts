@@ -3,6 +3,7 @@ import { supabase as defaultSupabase } from "./supabase.js";
 import { redisGet, redisSet } from "./redis.js";
 import { agentLLMClient } from "./azureClient.js";
 import { searchNearbyPlaces } from "./foursquareClient.js";
+import { scrapeGoogleEvents } from "./eventsScraper.js";
 import { midpoint } from "./connectionContext.js";
 import { cellToLatLngSafe } from "../shared/h3.js";
 import { analyzeTextSafety, isContentSafetyConfigured } from "./contentSafety.js";
@@ -61,6 +62,16 @@ export type ResearchData = {
     nearConnectionId?: string;
     nearConnectionName?: string;
   }>;
+  events: Array<{
+    title: string;
+    date: string;
+    time?: string;
+    venue?: string;
+    address?: string;
+    link?: string;
+    source?: string;
+    price?: string;
+  }>;
 };
 
 export type MeetupSuggestion = {
@@ -110,6 +121,10 @@ export type SwarmState = {
   createdAt: string;
   updatedAt: string;
   error: string | null;
+  /** When set, the researcher narrows its candidate pool to this single connection. */
+  targetConnectionId: string | null;
+  /** When empty suggestions, details the reason (e.g. "too far", "no location shared"). */
+  emptyReason: string | null;
 };
 
 // ─── Streaming hooks (additive — enables realtime demo surfaces) ──────────────
@@ -266,6 +281,18 @@ Return ONLY valid JSON: { "intent": "string", "tasks": [{ "id": "string", "descr
   trace(state, "planner", "planning", `taskType=${state.taskType}`, `intent="${state.plan.intent}", tasks=${state.plan.tasks.length}`, ms, "completed");
 }
 
+function getDistanceKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 6371; // Radius of the earth in km
+  const dLat = (b.lat - a.lat) * Math.PI / 180;
+  const dLng = (b.lng - a.lng) * Math.PI / 180;
+  const lat1 = a.lat * Math.PI / 180;
+  const lat2 = b.lat * Math.PI / 180;
+  const val = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.sin(dLng/2) * Math.sin(dLng/2) * Math.cos(lat1) * Math.cos(lat2);
+  const c = 2 * Math.atan2(Math.sqrt(val), Math.sqrt(1-val));
+  return R * c;
+}
+
 // ─── Agent: Researcher ────────────────────────────────────────────────────────
 
 async function researcherAgent(
@@ -296,9 +323,21 @@ async function researcherAgent(
     .or(`requester_id.eq.${state.userId},addressee_id.eq.${state.userId}`)
     .eq("status", "accepted");
 
-  const partnerIds = (connRows ?? []).map((r) =>
+  const rawPartnerIds = (connRows ?? []).map((r) =>
     r.requester_id === state.userId ? r.addressee_id : r.requester_id
   ) as string[];
+
+  let partnerIds = [...rawPartnerIds];
+
+  // When a target connection is specified, narrow the candidate pool to just
+  // that person (if they are in the accepted set). This powers the demo
+  // connection-picker without changing the overall swarm logic.
+  if (state.targetConnectionId) {
+    if (!rawPartnerIds.includes(state.targetConnectionId)) {
+      state.emptyReason = "Target user is not an accepted connection.";
+    }
+    partnerIds = partnerIds.filter((id) => id === state.targetConnectionId);
+  }
 
   let connections: ConnectionCandidate[] = [];
   if (partnerIds.length > 0) {
@@ -343,6 +382,26 @@ async function researcherAgent(
       .sort((a, b) => b._score - a._score)
       .slice(0, 5)
       .map(({ _score: _s, ...c }) => c);
+  }
+
+  if (state.targetConnectionId && !state.emptyReason) {
+    const partnerRow = connections.find((p) => p.userId === state.targetConnectionId);
+    if (!partnerRow) {
+      state.emptyReason = "Target connection profile not found.";
+    } else if (state.taskType === "meetup") {
+      if (!coords) {
+        state.emptyReason = "Your location is not set.";
+      } else if (!partnerRow.coords) {
+        state.emptyReason = `${partnerRow.firstName} has not shared their location.`;
+      } else {
+        const dist = getDistanceKm(coords, partnerRow.coords);
+        if (dist > 50) {
+          state.emptyReason = `${partnerRow.firstName} is too far apart (${Math.round(dist)} km) for a meetup.`;
+        }
+      }
+    }
+  } else if (!state.targetConnectionId && connections.length === 0) {
+    state.emptyReason = "You have no accepted connections.";
   }
 
   // Nearby venues for meetup tasks — grounded on the MIDPOINT between the user
@@ -405,6 +464,9 @@ async function researcherAgent(
           rating: p.rating ?? null,
         }));
       }
+      if (venues.length === 0 && !state.emptyReason) {
+        state.emptyReason = "No meetup venues found nearby.";
+      }
     } catch {
       agentLog("researcher", "Venue search unavailable, continuing without venues");
     }
@@ -421,15 +483,32 @@ async function researcherAgent(
     },
     connections,
     venues,
+    events: [],
   };
+
+  // Fetch local events in parallel — enriches suggestions with real happenings.
+  if (state.taskType === "meetup" && coords) {
+    try {
+      const eventQuery = myInterests.slice(0, 3).join(" ") || "events near me";
+      const locationStr = `${coords.lat},${coords.lng}`;
+      const scraped = await scrapeGoogleEvents(eventQuery, locationStr);
+      state.research.events = scraped.slice(0, 8);
+      if (state.research.events.length > 0) {
+        agentLog("researcher", `Found ${state.research.events.length} local events`);
+      }
+    } catch {
+      // Events are optional enrichment — continue without them.
+    }
+  }
 
   const ms = Date.now() - t0;
   const grounded = venues.some((v) => v.nearConnectionId);
+  const eventCount = state.research.events.length;
   agentLog(
     "researcher",
-    `Research complete — ${connections.length} connections, ${venues.length} venues${grounded ? " (midpoint-grounded)" : ""} (${ms}ms)`
+    `Research complete — ${connections.length} connections, ${venues.length} venues${grounded ? " (midpoint-grounded)" : ""}, ${eventCount} events (${ms}ms)`
   );
-  trace(state, "researcher", "research", `userId=${state.userId}`, `${connections.length} connections, ${venues.length} venues${grounded ? " (midpoint-grounded)" : ""}`, ms, "completed");
+  trace(state, "researcher", "research", `userId=${state.userId}`, `${connections.length} connections, ${venues.length} venues, ${eventCount} events`, ms, "completed");
 }
 
 // ─── Agent: Executor ──────────────────────────────────────────────────────────
@@ -443,6 +522,18 @@ async function executorAgent(
   state.attempts += 1;
   agentLog("executor", `Generating suggestions (attempt ${state.attempts}/${state.maxAttempts})`);
   state.phase = "execution";
+
+  if (state.emptyReason) {
+    if (state.taskType === "meetup") {
+      state.executorOutput = { taskType: "meetup", meetupSuggestions: [] };
+    } else {
+      state.executorOutput = { taskType: "connections", connectionSuggestions: [] };
+    }
+    const duration = Date.now() - t0;
+    agentLog("executor", `Skipping suggestion generation: ${state.emptyReason}`);
+    trace(state, "executor", "execution", `attempt ${state.attempts}`, `0 suggestions (skipped: ${state.emptyReason})`, duration, "completed", state.attempts);
+    return;
+  }
 
   const research = state.research!;
   const priorCritique = state.critiqueResult && !state.critiqueResult.approved
@@ -463,6 +554,13 @@ Generate 2–4 personalized meetup suggestions. Each suggestion MUST:
 VENUE GROUNDING: each venue has a "nearConnectionId" marking the connection it sits
 roughly halfway to. PREFER a venue whose nearConnectionId matches the suggestion's
 connectionId — that venue is fairly located between the user and that specific person.
+EVENTS: you may also reference a real upcoming event from the events list if it
+fits the connection's interests — e.g. "There's a jazz night at Blue Tokai this
+Saturday you'd both enjoy." Only reference events that exist in the input list.
+PERSPECTIVE: Write ALL suggestion text as an AI recommendation TO the user.
+Use third-person phrasing: "You and {name} could...", "Consider meeting {name} at...",
+or "{name} would enjoy...". NEVER use first-person plural ("Let's", "We can", "We should").
+The user is reading this as a suggestion FROM the app, not writing it themselves.
 Return ONLY valid JSON:
 {"suggestions":[{"type":"detailed","connectionId":"<userId>","connectionName":"<firstName>","title":"<short title>","place":"<venue name>","time":"<specific time>","text":"<2-3 sentence description>"}]}
 ${priorCritique}${humanNote}`;
@@ -471,6 +569,7 @@ ${priorCritique}${humanNote}`;
       user: { firstName: research.userProfile.firstName, bio: research.userProfile.bio, interests: research.userProfile.interests },
       connections: research.connections.map((c) => ({ userId: c.userId, firstName: c.firstName, sharedInterests: c.sharedInterests, nearby: c.nearby, proximityCount: c.proximityCount })),
       venues: research.venues.map((v) => ({ name: v.name, address: v.address, types: v.types, nearConnectionId: v.nearConnectionId ?? null, nearConnectionName: v.nearConnectionName ?? null })),
+      events: research.events.map((e) => ({ title: e.title, date: e.date, time: e.time, venue: e.venue, address: e.address, price: e.price })),
     };
   } else {
     systemPrompt = `You are the Executor agent for a privacy-first social platform.
@@ -531,8 +630,21 @@ async function criticAgent(state: SwarmState, onToken?: (delta: string) => void,
 
   const suggestions = state.executorOutput?.meetupSuggestions ?? state.executorOutput?.connectionSuggestions ?? [];
   if (suggestions.length === 0) {
-    state.critiqueResult = { approved: false, feedback: "No suggestions generated.", issues: ["empty_output"] };
-    trace(state, "critic", "critique", "0 suggestions", "REJECTED: empty", Date.now() - t0, "rejected", state.attempts);
+    state.critiqueResult = {
+      approved: true,
+      feedback: state.emptyReason || "No suggestions generated.",
+      issues: [],
+    };
+    trace(
+      state,
+      "critic",
+      "critique",
+      "0 suggestions",
+      `APPROVED: ${state.emptyReason || "empty"}`,
+      Date.now() - t0,
+      "completed",
+      state.attempts
+    );
     return;
   }
 
@@ -547,6 +659,7 @@ Approve ONLY if ALL of the following are true:
 3. (For meetup) Every suggestion names a specific venue from the validVenueNames list
 4. Suggestions reference specific shared interests or proximity — not generic reasons
 5. Content is safe and appropriate
+6. Suggestion text is written as an AI recommendation TO the user — never from the user's first-person perspective (reject "Let's", "We can", "We should", "I'll" phrasing)
 
 Return ONLY valid JSON: {"approved":true/false,"feedback":"brief explanation","issues":["issue1",...]}`;
 
@@ -610,10 +723,12 @@ export type SwarmParams = {
   foursquareApiKey: string;
   /** Optional realtime hooks: stream events and/or abort the run. */
   hooks?: SwarmHooks;
+  /** When set, the researcher focuses on this specific accepted connection. */
+  targetConnectionId?: string | null;
 };
 
 export async function runSwarm(params: SwarmParams): Promise<SwarmState> {
-  const { userId, taskType, supabase = defaultSupabase, foursquareApiKey, hooks } = params;
+  const { userId, taskType, supabase = defaultSupabase, foursquareApiKey, hooks, targetConnectionId } = params;
   const runId = randomUUID();
 
   const emit: SwarmEmit = hooks?.emit ?? (() => {});
@@ -653,6 +768,8 @@ export async function runSwarm(params: SwarmParams): Promise<SwarmState> {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     error: null,
+    targetConnectionId: targetConnectionId ?? null,
+    emptyReason: null,
   };
 
   agentLog("planner", `=== SWARM START runId=${runId} task=${taskType} provider=${agentLLMClient.provider} ===`);
