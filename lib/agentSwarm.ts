@@ -3,7 +3,6 @@ import { supabase as defaultSupabase } from "./supabase.js";
 import { redisGet, redisSet } from "./redis.js";
 import { agentLLMClient } from "./azureClient.js";
 import { searchNearbyPlaces } from "./foursquareClient.js";
-import { scrapeGoogleEvents } from "./eventsScraper.js";
 import { midpoint } from "./connectionContext.js";
 import { cellToLatLngSafe } from "../shared/h3.js";
 import { analyzeTextSafety, isContentSafetyConfigured } from "./contentSafety.js";
@@ -61,16 +60,6 @@ export type ResearchData = {
     /** The connection this venue sits roughly halfway to (midpoint-grounded). */
     nearConnectionId?: string;
     nearConnectionName?: string;
-  }>;
-  events: Array<{
-    title: string;
-    date: string;
-    time?: string;
-    venue?: string;
-    address?: string;
-    link?: string;
-    source?: string;
-    price?: string;
   }>;
 };
 
@@ -396,7 +385,7 @@ async function researcherAgent(
       } else {
         const dist = getDistanceKm(coords, partnerRow.coords);
         if (dist > 50) {
-          state.emptyReason = `${partnerRow.firstName} is too far apart (${Math.round(dist)} km) for a meetup.`;
+          state.emptyReason = `${partnerRow.firstName} is too far apart ~(${Math.round(dist)} km) for a meetup.`;
         }
       }
     }
@@ -483,32 +472,15 @@ async function researcherAgent(
     },
     connections,
     venues,
-    events: [],
   };
-
-  // Fetch local events in parallel — enriches suggestions with real happenings.
-  if (state.taskType === "meetup" && coords) {
-    try {
-      const eventQuery = myInterests.slice(0, 3).join(" ") || "events near me";
-      const locationStr = `${coords.lat},${coords.lng}`;
-      const scraped = await scrapeGoogleEvents(eventQuery, locationStr);
-      state.research.events = scraped.slice(0, 8);
-      if (state.research.events.length > 0) {
-        agentLog("researcher", `Found ${state.research.events.length} local events`);
-      }
-    } catch {
-      // Events are optional enrichment — continue without them.
-    }
-  }
 
   const ms = Date.now() - t0;
   const grounded = venues.some((v) => v.nearConnectionId);
-  const eventCount = state.research.events.length;
   agentLog(
     "researcher",
-    `Research complete — ${connections.length} connections, ${venues.length} venues${grounded ? " (midpoint-grounded)" : ""}, ${eventCount} events (${ms}ms)`
+    `Research complete — ${connections.length} connections, ${venues.length} venues${grounded ? " (midpoint-grounded)" : ""} (${ms}ms)`
   );
-  trace(state, "researcher", "research", `userId=${state.userId}`, `${connections.length} connections, ${venues.length} venues, ${eventCount} events`, ms, "completed");
+  trace(state, "researcher", "research", `userId=${state.userId}`, `${connections.length} connections, ${venues.length} venues${grounded ? " (midpoint-grounded)" : ""}`, ms, "completed");
 }
 
 // ─── Agent: Executor ──────────────────────────────────────────────────────────
@@ -554,9 +526,6 @@ Generate 2–4 personalized meetup suggestions. Each suggestion MUST:
 VENUE GROUNDING: each venue has a "nearConnectionId" marking the connection it sits
 roughly halfway to. PREFER a venue whose nearConnectionId matches the suggestion's
 connectionId — that venue is fairly located between the user and that specific person.
-EVENTS: you may also reference a real upcoming event from the events list if it
-fits the connection's interests — e.g. "There's a jazz night at Blue Tokai this
-Saturday you'd both enjoy." Only reference events that exist in the input list.
 PERSPECTIVE: Write ALL suggestion text as an AI recommendation TO the user.
 Use third-person phrasing: "You and {name} could...", "Consider meeting {name} at...",
 or "{name} would enjoy...". NEVER use first-person plural ("Let's", "We can", "We should").
@@ -569,7 +538,6 @@ ${priorCritique}${humanNote}`;
       user: { firstName: research.userProfile.firstName, bio: research.userProfile.bio, interests: research.userProfile.interests },
       connections: research.connections.map((c) => ({ userId: c.userId, firstName: c.firstName, sharedInterests: c.sharedInterests, nearby: c.nearby, proximityCount: c.proximityCount })),
       venues: research.venues.map((v) => ({ name: v.name, address: v.address, types: v.types, nearConnectionId: v.nearConnectionId ?? null, nearConnectionName: v.nearConnectionName ?? null })),
-      events: research.events.map((e) => ({ title: e.title, date: e.date, time: e.time, venue: e.venue, address: e.address, price: e.price })),
     };
   } else {
     systemPrompt = `You are the Executor agent for a privacy-first social platform.

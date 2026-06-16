@@ -521,5 +521,4 @@ function setupConnectionPicker(containerId) {
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 initSession();
-setupConnectionPicker("conn-picker-connections");
 setupConnectionPicker("conn-picker-meetup");
