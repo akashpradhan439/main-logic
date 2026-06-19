@@ -2,40 +2,71 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { verifyAccessToken, AuthError } from "../shared/auth.js";
-import { uploadPrekeys, getPrekeyBundle, rotateSignedPrekey } from "../lib/keys.js";
+import { uploadPrekeys, getPrekeyBundle, rotateSignedPrekey, getOpkStatus } from "../lib/keys.js";
 import { findConnectionBetweenUsers, isPairBlocked } from "../lib/connections.js";
 
 // ─── Zod Schemas ──────────────────────────────────────────────────────────────
 
+function isValidBase64(s: string): boolean {
+  if (s.length === 0) return false;
+  try {
+    const decoded = Buffer.from(s, "base64");
+    return decoded.toString("base64") === s;
+  } catch {
+    return false;
+  }
+}
+
+function base64Key(byteLen: number) {
+  return z.string().refine(
+    (s) => {
+      if (!isValidBase64(s)) return false;
+      return Buffer.from(s, "base64").length === byteLen;
+    },
+    { message: `Must be valid base64 encoding exactly ${byteLen} bytes` }
+  );
+}
+
+// X25519 keys are 32 bytes, Ed25519 keys/sigs are 32/64 bytes, ML-KEM-768 public key is 1184 bytes
+const base64X25519 = base64Key(32);
+const base64Ed25519Pub = base64Key(32);
+const base64Ed25519Sig = base64Key(64);
+const base64MlKem768 = base64Key(1184);
+
 // H1: an OPK may be a bare base64 string (legacy) or carry a client-assigned id.
 const OneTimePrekeySchema = z.union([
-  z.string().min(1),
-  z.object({ keyId: z.number().int().nonnegative(), publicKey: z.string().min(1) }),
+  base64X25519,
+  z.object({ keyId: z.number().int().nonnegative(), publicKey: base64X25519 }),
+]);
+
+const PqOneTimePrekeySchema = z.union([
+  base64MlKem768,
+  z.object({ keyId: z.number().int().nonnegative(), publicKey: base64MlKem768 }),
 ]);
 
 const UploadKeysSchema = z.object({
-  identityKey:             z.string().min(1),
-  identitySigningKey:      z.string().min(1),
-  signedPreKey:            z.string().min(1),
+  identityKey:             base64Ed25519Pub,
+  identitySigningKey:      base64Ed25519Pub.optional(),
+  signedPreKey:            base64X25519,
   signedPreKeyId:          z.number().int().positive().default(1),
-  pqSignedPreKey:          z.string().min(1),
+  pqSignedPreKey:          base64MlKem768,
   pqSignedPreKeyId:        z.number().int().positive().default(1),
-  signedPreKeySignature:   z.string().min(1),
-  pqSignedPreKeySignature: z.string().min(1),
+  signedPreKeySignature:   base64Ed25519Sig,
+  pqSignedPreKeySignature: base64Ed25519Sig,
   oneTimePreKeys:          z.array(OneTimePrekeySchema).optional().default([]),
-  pqOneTimePreKeys:        z.array(OneTimePrekeySchema).optional().default([]),
+  pqOneTimePreKeys:        z.array(PqOneTimePrekeySchema).optional().default([]),
 });
 
 const RotateSignedPrekeySchema = z.object({
-  signedPreKey:          z.string().min(1),
+  signedPreKey:          base64X25519,
   signedPreKeyId:        z.number().int().positive(),
-  signedPreKeySignature: z.string().min(1),
+  signedPreKeySignature: base64Ed25519Sig,
 });
 
 const RotatePqSignedPrekeySchema = z.object({
-  pqSignedPreKey:          z.string().min(1),
+  pqSignedPreKey:          base64MlKem768,
   pqSignedPreKeyId:        z.number().int().positive(),
-  pqSignedPreKeySignature: z.string().min(1),
+  pqSignedPreKeySignature: base64Ed25519Sig,
 });
 
 // ─── Dependency Injection ─────────────────────────────────────────────────────
@@ -46,6 +77,7 @@ export type KeysRouteDeps = {
   uploadPrekeys: typeof uploadPrekeys;
   getPrekeyBundle: typeof getPrekeyBundle;
   rotateSignedPrekey: typeof rotateSignedPrekey;
+  getOpkStatus: typeof getOpkStatus;
   findConnectionBetweenUsers: typeof findConnectionBetweenUsers;
   isPairBlocked: typeof isPairBlocked;
   AuthError: typeof AuthError;
@@ -58,6 +90,7 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
     uploadPrekeys,
     getPrekeyBundle,
     rotateSignedPrekey,
+    getOpkStatus,
     findConnectionBetweenUsers,
     isPairBlocked,
     AuthError,
@@ -67,12 +100,14 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
   return async function keysRoutes(app: FastifyInstance) {
     const {
       supabase, verifyAccessToken, uploadPrekeys, getPrekeyBundle,
-      rotateSignedPrekey, findConnectionBetweenUsers, isPairBlocked, AuthError,
+      rotateSignedPrekey, getOpkStatus, findConnectionBetweenUsers, isPairBlocked, AuthError,
     } = deps;
 
     // ─── POST: Upload Prekeys ───────────────────────────────────────────
 
-    app.post("/keys/upload", async (req, reply) => {
+    app.post("/keys/upload", {
+      config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+    }, async (req, reply) => {
       const log = req.log;
       try {
         let userId: string;
@@ -98,12 +133,16 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
           oneTimePreKeys, pqOneTimePreKeys,
         } = parsed.data;
 
+        // C5/N1: identitySigningKey is optional — defaults to identityKey (XEdDSA single-key model).
+        // The server uses identityKey for both signing verification and DH derivation.
+        const effectiveSigningKey = identitySigningKey ?? identityKey;
+
         const { error } = await uploadPrekeys(
           supabase as any,
           userId,
           {
             identityKey,
-            identitySigningKey,
+            identitySigningKey: effectiveSigningKey,
             signedPrekey:     signedPreKey,
             signedPrekeyId:   signedPreKeyId,
             pqSignedPrekey:   pqSignedPreKey,
@@ -130,7 +169,9 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
 
     // ─── GET: Fetch Prekey Bundle ───────────────────────────────────────
 
-    app.get("/keys/bundle/:userId", async (req, reply) => {
+    app.get("/keys/bundle/:userId", {
+      config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+    }, async (req, reply) => {
       const log = req.log;
       const { userId: targetUserId } = req.params as { userId: string };
 
@@ -163,7 +204,7 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
           }
         }
 
-        const { bundle, error } = await getPrekeyBundle(supabase as any, targetUserId);
+        const { bundle, error, opkPoolLow } = await getPrekeyBundle(supabase as any, targetUserId);
 
         if (error || !bundle) {
           // M7: distinguish a stale bundle (re-upload needed) from not-found.
@@ -173,6 +214,10 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
           }
           log.error({ event: "keys_bundle_fetch_failure", targetUserId, error }, "Failed to fetch prekey bundle");
           return reply.status(404).send({ success: false, error: req.t("common.errors.unable_to_process") });
+        }
+
+        if (opkPoolLow) {
+          log.warn({ event: "keys_opk_pool_low", targetUserId }, "OPK pool is low — client should re-upload");
         }
 
         log.info({ event: "keys_bundle_fetch_success", targetUserId }, "Prekey bundle fetched");
@@ -185,7 +230,9 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
 
     // ─── PUT: Rotate Signed Prekey (C2: archive instead of overwrite) ────
 
-    app.put("/keys/signed-prekey", async (req, reply) => {
+    app.put("/keys/signed-prekey", {
+      config: { rateLimit: { max: 2, timeWindow: "1 minute" } },
+    }, async (req, reply) => {
       const log = req.log;
       try {
         let userId: string;
@@ -228,7 +275,9 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
 
     // ─── PUT: Rotate PQ Signed Prekey (H5) ──────────────────────────────
 
-    app.put("/keys/pq-signed-prekey", async (req, reply) => {
+    app.put("/keys/pq-signed-prekey", {
+      config: { rateLimit: { max: 2, timeWindow: "1 minute" } },
+    }, async (req, reply) => {
       const log = req.log;
       try {
         let userId: string;
@@ -265,6 +314,38 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
         return reply.status(200).send({ success: true });
       } catch (err) {
         log.error({ event: "pq_spk_rotation_error", error: err }, "Unexpected error rotating PQ signed prekey");
+        return reply.status(500).send({ success: false, error: "Internal server error" });
+      }
+    });
+
+    // ─── GET: OPK Pool Status ────────────────────────────────────────────
+
+    app.get("/keys/opk-status", {
+      config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+    }, async (req, reply) => {
+      const log = req.log;
+      try {
+        let userId: string;
+        try {
+          const user = verifyAccessToken(req.headers.authorization);
+          userId = user.sub;
+        } catch (err) {
+          if (err instanceof AuthError) {
+            return reply.status(err.status).send({ success: false, error: req.t("common.errors.auth_required") });
+          }
+          throw err;
+        }
+
+        const { classical, pq, error } = await getOpkStatus(supabase as any, userId);
+        if (error) {
+          log.error({ event: "opk_status_failure", userId, error }, "Failed to get OPK status");
+          return reply.status(500).send({ success: false, error: "Failed to get OPK status" });
+        }
+
+        log.info({ event: "opk_status_success", userId, classical, pq }, "OPK status fetched");
+        return reply.status(200).send({ success: true, classical, pq });
+      } catch (err) {
+        log.error({ event: "opk_status_error", error: err }, "Unexpected error in keys/opk-status");
         return reply.status(500).send({ success: false, error: "Internal server error" });
       }
     });

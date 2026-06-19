@@ -215,7 +215,7 @@ async function buildApp(
 
 function makeEnvelope() {
   return {
-    header: { dhPublicKey: Buffer.from([1, 2, 3]).toString("base64"), n: 0, pn: 0 },
+    header: { dhPublicKey: Buffer.alloc(32, 0x01).toString("base64"), n: 0, pn: 0 },
     ciphertext: Buffer.from([4, 5, 6]).toString("base64"),
   };
 }

@@ -116,7 +116,7 @@ const noopLog = { info() {}, error() {}, warn() {} } as any;
 
 function makeEnvelope(n = 0) {
   return {
-    header: { dhPublicKey: Buffer.from([1, 2, 3]).toString("base64"), n, pn: 0 },
+    header: { dhPublicKey: Buffer.alloc(32, 0x01).toString("base64"), n, pn: 0 },
     ciphertext: Buffer.from([4, 5, 6, n]).toString("base64"),
   };
 }
@@ -157,7 +157,7 @@ async function buildApp(senderId: string, recipientId: string) {
   }));
 
   // Minimal supabase stub: only the user_prekeys lookup the C4 sender-identity
-  // check performs when a bootstrap is present.
+  // check performs when a bootstrap is present, and the messages table for dedup.
   const supabaseStub = {
     from(table: string) {
       if (table === "user_prekeys") {
@@ -167,6 +167,19 @@ async function buildApp(senderId: string, recipientId: string) {
               async maybeSingle() {
                 return { data: { identity_key_public: SENDER_IK_B64 }, error: null };
               },
+            }),
+          }),
+        };
+      }
+      if (table === "messages") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                limit: () => ({
+                  maybeSingle: async () => ({ data: null, error: null }),
+                }),
+              }),
             }),
           }),
         };
@@ -503,21 +516,47 @@ test("Bug1: insertMessage records first sender as canonical initiator (set-once 
               },
             };
           },
+          select(_cols: string) {
+            return {
+              eq(_col: string, _val: any) {
+                return {
+                  eq(_col2: string, _val2: any) {
+                    return {
+                      limit(_n: number) {
+                        return {
+                          maybeSingle: async () => ({ data: null, error: null }),
+                        };
+                      },
+                    };
+                  },
+                };
+              },
+            };
+          },
         };
       }
       if (table === "conversations") {
         return {
           update(patch: any) {
             return {
-              eq() {
-                // `.is(...)` => set-once guarded update (initiator_user_id).
-                // awaited directly => unguarded update (updated_at bump).
+              eq(_col: string, _val: any) {
+                // `.is(...).select(...)` => set-once guarded update with RETURNING.
+                // `.then(...)` => unguarded update (updated_at bump).
                 return {
                   is(_col: string, _val: null) {
                     if (convRow.initiator_user_id === null && patch.initiator_user_id !== undefined) {
                       convRow.initiator_user_id = patch.initiator_user_id;
                     }
-                    return Promise.resolve({ error: null });
+                    return {
+                      select(_cols: string) {
+                        return {
+                          maybeSingle: async () => ({
+                            data: { initiator_user_id: convRow.initiator_user_id },
+                            error: null,
+                          }),
+                        };
+                      },
+                    };
                   },
                   then(resolve: (v: { error: null }) => void) {
                     if (patch.updated_at !== undefined) convRow.updated_at = patch.updated_at;

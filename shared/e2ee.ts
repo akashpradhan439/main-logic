@@ -51,6 +51,10 @@ const F_CONSTANT = new Uint8Array(32).fill(0xff);
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+// C5/N1: identityKey is an Ed25519 key used for BOTH signing (via Ed25519) and
+// DH derivation (via XEdDSA/ed25519ToX25519). This is the Signal-style single-key
+// model (XEdDSA). The separate identity_signing_key_public column in the DB is
+// deprecated and defaults to identityKey.
 export interface HandshakeBundle {
   identityKey: Uint8Array;
   signedPrekey: Uint8Array;

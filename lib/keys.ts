@@ -149,6 +149,28 @@ export async function rotateSignedPrekey(
   return { error };
 }
 
+/** Returns the OPK pool counts for a user. */
+export async function getOpkStatus(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<{ classical: number; pq: number; error: any }> {
+  const [{ count: classical }, { count: pq }] = await Promise.all([
+    supabase
+      .from("one_time_prekeys")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("is_pq", false)
+      .is("used_at", null),
+    supabase
+      .from("one_time_prekeys")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("is_pq", true)
+      .is("used_at", null),
+  ]);
+  return { classical: classical ?? 0, pq: pq ?? 0, error: null };
+}
+
 /**
  * Returns the subset of the given user IDs that have a USABLE prekey bundle
  * (identity key present and a non-sentinel pq_signature). Lets the messaging API
@@ -179,7 +201,7 @@ export async function usersWithUsableBundles(
 export async function getPrekeyBundle(
   supabase: SupabaseClient,
   userId: string
-): Promise<{ bundle: PrekeyBundle | null; error: any }> {
+): Promise<{ bundle: PrekeyBundle | null; error: any; opkPoolLow: boolean }> {
   const { data: userPrekeys, error: prekeyError } = await supabase
     .from("user_prekeys")
     .select("*")
@@ -187,14 +209,14 @@ export async function getPrekeyBundle(
     .single();
 
   if (prekeyError || !userPrekeys) {
-    return { bundle: null, error: prekeyError || new Error("Prekeys not found") };
+    return { bundle: null, error: prekeyError || new Error("Prekeys not found"), opkPoolLow: false };
   }
 
   // M7: a legacy sentinel pq_signature means the bundle is unusable; surface a
   // clear error so the caller gets a "re-upload needed" signal rather than a
   // bundle that crashes the initiator's signature verification.
   if (!userPrekeys.pq_signature || userPrekeys.pq_signature === "") {
-    return { bundle: null, error: new Error("PREKEY_BUNDLE_STALE: user must re-upload prekeys") };
+    return { bundle: null, error: new Error("PREKEY_BUNDLE_STALE: user must re-upload prekeys"), opkPoolLow: false };
   }
 
   const { classical: opk, pq: pqOpk } = await consumePrekeysAtomic(supabase, userId);
@@ -231,5 +253,6 @@ export async function getPrekeyBundle(
       remainingPqOtpCount: remainingPqOtpCount ?? 0,
     },
     error: null,
+    opkPoolLow: (remainingOtpCount ?? 0) < 5 || (remainingPqOtpCount ?? 0) < 5,
   };
 }

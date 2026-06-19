@@ -110,6 +110,10 @@ function normalizeEnvelopeForStorage(envelope: {
   const ciphertext  = toUint8Array(envelope.ciphertext);
   if (!dhPublicKey || !ciphertext) return null;
 
+  const MAX_ENVELOPE_SIZE = 65536;
+  if (dhPublicKey.length !== 32) return null;
+  if (ciphertext.length > MAX_ENVELOPE_SIZE) return null;
+
   const result: MessageEnvelope = {
     header:    { dhPublicKey, n: envelope.header.n, pn: envelope.header.pn },
     ciphertext,
@@ -342,6 +346,22 @@ export function createMessagingRoutes(
             .limit(1)
             .maybeSingle();
 
+          let decodedEnvelope: MessageEnvelope | null = null;
+          if (lastMsg?.envelope) {
+            try {
+              if (typeof lastMsg.envelope === "string") {
+                const raw = Uint8Array.from(Buffer.from(lastMsg.envelope, "base64"));
+                decodedEnvelope = decodeEnvelope(raw);
+              } else if (lastMsg.envelope instanceof Uint8Array) {
+                decodedEnvelope = decodeEnvelope(lastMsg.envelope);
+              } else if (lastMsg.envelope.header && lastMsg.envelope.ciphertext) {
+                decodedEnvelope = lastMsg.envelope;
+              }
+            } catch {
+              decodedEnvelope = null;
+            }
+          }
+
           return {
             id: conv.id,
             otherUserId,
@@ -353,7 +373,7 @@ export function createMessagingRoutes(
             signalReady: readySet.has(otherUserId),
             lastMessage: lastMsg ? {
               id: lastMsg.id,
-              envelope: lastMsg.envelope,
+              envelope: decodedEnvelope,
               senderId: lastMsg.sender_id,
               createdAt: lastMsg.created_at,
               attachmentUrl: lastMsg.attachment_url,
@@ -379,7 +399,9 @@ export function createMessagingRoutes(
 
     // ─── REST: Send Message ───────────────────────────────────────────────
 
-    app.post("/messaging/conversations/:id/messages", async (req, reply) => {
+    app.post("/messaging/conversations/:id/messages", {
+      config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+    }, async (req, reply) => {
       const requestId = req.id;
       const log = req.log;
       const { id: conversationId } = req.params as { id: string };
@@ -713,7 +735,7 @@ export function createMessagingRoutes(
           throw err;
         }
 
-        const { isParticipant, conversation, error: verifyError } = await verifyConversationParticipant(
+        const { isParticipant, isBlocked, conversation, error: verifyError } = await verifyConversationParticipant(
           supabase, conversationId, userId
         );
 
@@ -722,6 +744,9 @@ export function createMessagingRoutes(
         }
         if (!isParticipant) {
           return reply.status(403).send({ success: false, error: req.t("messaging.errors.not_participant") });
+        }
+        if (isBlocked) {
+          return reply.status(403).send({ success: false, error: req.t("messaging.errors.blocked_send") });
         }
 
         const { bootstrap, senderId, error } = await getConversationBootstrap(supabase, conversationId);

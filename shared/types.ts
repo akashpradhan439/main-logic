@@ -66,17 +66,9 @@ export function encodeEnvelope(envelope: MessageEnvelope): Uint8Array {
     ciphertext: envelope.ciphertext,
   };
 
-  if (envelope.bootstrap) {
-    payload.bootstrap = {
-      senderIdentityKey:  envelope.bootstrap.senderIdentityKey,
-      senderEphemeralKey: envelope.bootstrap.senderEphemeralKey,
-      pqCiphertext:       envelope.bootstrap.pqCiphertext,
-      signedPrekeyId:     envelope.bootstrap.signedPrekeyId,
-      pqSignedPrekeyId:   envelope.bootstrap.pqSignedPrekeyId,
-      oneTimePrekeyId:    envelope.bootstrap.oneTimePrekeyId ?? 0,
-      pqOneTimePrekeyId:  envelope.bootstrap.pqOneTimePrekeyId ?? 0,
-    };
-  }
+  // M8/#13: Bootstrap data is NOT encoded in protobuf — it's stored separately
+  // in the bootstrap_json column. Clients consume the JSON sidecar, not the
+  // protobuf field. This avoids dual-storage drift.
 
   const message = ProtoMessageEnvelope.create(payload);
   return ProtoMessageEnvelope.encode(message).finish();
@@ -95,6 +87,8 @@ export function decodeEnvelope(data: Uint8Array): MessageEnvelope {
     throw new Error("Invalid envelope: ciphertext is empty");
   }
 
+  // M8/#13: Bootstrap data is NOT in protobuf — it's in the bootstrap_json column.
+  // For backwards compatibility, we still check for it in legacy envelopes.
   const envelope: MessageEnvelope = {
     header: {
       dhPublicKey: obj.header.dhPublicKey,

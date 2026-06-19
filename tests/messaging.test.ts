@@ -270,7 +270,7 @@ function makeConnection(status: string, overrides: Partial<ConnectionRow> = {}):
 function makeEnvelope() {
   return {
     header: {
-      dhPublicKey: Buffer.from([1, 2, 3]).toString("base64"),
+      dhPublicKey: Buffer.alloc(32, 0x01).toString("base64"),
       n: 0,
       pn: 0,
     },

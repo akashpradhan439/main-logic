@@ -152,14 +152,51 @@ export async function insertMessage(
 ): Promise<{ message: MessageRow | null; initiatorUserId?: string | null; error: Error | null }> {
   // Encode the structured envelope to Protobuf binary
   const binaryEnvelope = encodeEnvelope(envelope);
+  const envelopeBase64 = Buffer.from(binaryEnvelope).toString("base64");
+
+  // Deduplication: check if a message with the same envelope already exists in this conversation.
+  // This prevents duplicate messages from client retries after network timeouts.
+  const { data: existing } = await client
+    .from("messages")
+    .select("id")
+    .eq("conversation_id", conversationId)
+    .eq("envelope", envelopeBase64)
+    .limit(1)
+    .maybeSingle();
+
+  if (existing) {
+    log.info(
+      { event: "message_dedup", conversationId, senderId, existingId: existing.id },
+      "Duplicate message detected, skipping insert"
+    );
+    // Return the existing message instead of inserting a duplicate
+    const { data: existingMsg } = await client
+      .from("messages")
+      .select("id, conversation_id, sender_id, envelope, attachment_url, attachment_type, created_at, bootstrap_json")
+      .eq("id", existing.id)
+      .single();
+
+    if (existingMsg) {
+      const message: MessageRow = {
+        id: existingMsg.id,
+        conversation_id: existingMsg.conversation_id,
+        sender_id: existingMsg.sender_id,
+        envelope: Buffer.from(existingMsg.envelope, "base64"),
+        attachment_url: existingMsg.attachment_url,
+        attachment_type: existingMsg.attachment_type,
+        created_at: existingMsg.created_at,
+        bootstrap_json: (existingMsg.bootstrap_json as BootstrapJson | null) ?? null,
+      };
+      return { message, error: null };
+    }
+  }
 
   const { data, error } = await client
     .from("messages")
     .insert({
       conversation_id: conversationId,
       sender_id: senderId,
-      // Store Protobuf binary as Base64 in the jsonb/text column
-      envelope: Buffer.from(binaryEnvelope).toString("base64"),
+      envelope: envelopeBase64,
       attachment_url: attachmentUrl,
       attachment_type: attachmentType,
       bootstrap_json: bootstrapJson,
@@ -192,30 +229,33 @@ export async function insertMessage(
   // is the PQXDH initiator vs responder, preventing the simultaneous-initiation
   // deadlock where both sides flip to responder onto opposite master secrets.
   const now = new Date().toISOString();
-  const [, { error: updateError }] = await Promise.all([
-    client.from("conversations")
-      .update({ initiator_user_id: senderId })
-      .eq("id", conversationId)
-      .is("initiator_user_id", null),
-    client.from("conversations").update({ updated_at: now }).eq("id", conversationId),
-  ]);
+  const { data: convUpdate, error: updateError } = await client
+    .from("conversations")
+    .update({ initiator_user_id: senderId, updated_at: now })
+    .eq("id", conversationId)
+    .is("initiator_user_id", null)
+    .select("initiator_user_id")
+    .maybeSingle();
 
   if (updateError) {
     log.error(
       { event: "conversation_updated_at_error", conversationId, err: updateError.message },
       "Failed to update conversation timestamp"
     );
-    // Non-fatal: the message was still inserted successfully
   }
 
-  // Read back the canonical initiator (whoever actually won the set-once race) so
-  // callers can hand the same value to both participants.
-  const { data: convRow } = await client
-    .from("conversations")
-    .select("initiator_user_id")
-    .eq("id", conversationId)
-    .maybeSingle();
-  const initiatorUserId = (convRow as { initiator_user_id: string | null } | null)?.initiator_user_id ?? senderId;
+  // If the update didn't match (another first-message won), read the canonical initiator.
+  let initiatorUserId = senderId;
+  if (!convUpdate?.initiator_user_id) {
+    const { data: convRow } = await client
+      .from("conversations")
+      .select("initiator_user_id")
+      .eq("id", conversationId)
+      .maybeSingle();
+    initiatorUserId = (convRow as { initiator_user_id: string | null } | null)?.initiator_user_id ?? senderId;
+  } else {
+    initiatorUserId = convUpdate.initiator_user_id;
+  }
 
   return { message, initiatorUserId, error: null };
 }
@@ -293,7 +333,7 @@ export async function* getMessagesSinceCursor(
       .select("id, conversation_id, sender_id, envelope, attachment_url, attachment_type, created_at, bootstrap_json")
       .in("conversation_id", conversationIds)
       .gt("created_at", lastCursor)
-      .order("created_at", { ascending: true })
+    .order("created_at", { ascending: false })
       .limit(batchSize);
 
     if (error || !data || data.length === 0) break;

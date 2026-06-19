@@ -6,6 +6,11 @@ import assert from "node:assert/strict";
 import Fastify from "fastify";
 import type { KeysRouteDeps } from "../routes/keys.js";
 
+// Valid base64 keys of correct byte lengths for validation
+const VALID_32B = Buffer.alloc(32, 0x41).toString("base64");      // 32 bytes Ed25519/X25519
+const VALID_64B = Buffer.alloc(64, 0x42).toString("base64");      // 64 bytes Ed25519 signature
+const VALID_1184B = Buffer.alloc(1184, 0x43).toString("base64");  // 1184 bytes ML-KEM-768
+
 // ─── Scenario State ──────────────────────────────────────────────────────────
 
 const scenario: {
@@ -53,7 +58,7 @@ const deps: Partial<KeysRouteDeps> = {
   },
   getPrekeyBundle: async (supabase: any, userId: string) => {
     if (userId !== scenario.userId && userId !== scenario.otherUserId) {
-      return { bundle: null, error: new Error("Not found") };
+      return { bundle: null, error: new Error("Not found"), opkPoolLow: false };
     }
     return {
       bundle: {
@@ -74,6 +79,7 @@ const deps: Partial<KeysRouteDeps> = {
         remainingPqOtpCount: 9,
       },
       error: null,
+      opkPoolLow: false,
     };
   },
   // C3: bundle fetch is gated on an accepted connection between requester/target.
@@ -120,20 +126,20 @@ test("Keys/Upload: success", async () => {
     url: "/keys/upload",
     headers: { authorization: "Bearer test" },
     payload: {
-      identityKey:             "ik",
-      identitySigningKey:      "signing-key",
-      signedPreKey:            "spk",
-      pqSignedPreKey:          "pqspk",
-      signedPreKeySignature:   "sig",
-      pqSignedPreKeySignature: "pqsig",
-      oneTimePreKeys:          ["opk1"],
-      pqOneTimePreKeys:        ["pqopk1"],
+      identityKey:             VALID_32B,
+      identitySigningKey:      VALID_32B,
+      signedPreKey:            VALID_32B,
+      pqSignedPreKey:          VALID_1184B,
+      signedPreKeySignature:   VALID_64B,
+      pqSignedPreKeySignature: VALID_64B,
+      oneTimePreKeys:          [VALID_32B],
+      pqOneTimePreKeys:        [VALID_1184B],
     },
   });
 
   assert.equal(res.statusCode, 200);
   assert.equal(res.json().success, true);
-  assert.equal(scenario.prekeys.identityKey, "ik");
+  assert.equal(scenario.prekeys.identityKey, VALID_32B);
   assert.equal(scenario.oneTimePrekeys.length, 1);
   await app.close();
 });
