@@ -136,6 +136,7 @@ services:
       - "80:80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./landing:/usr/share/nginx/html:ro
     depends_on:
       - api
       - demo
