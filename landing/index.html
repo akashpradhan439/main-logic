@@ -6,129 +6,197 @@
     <title>Lokaal — Meet People Who Are Actually Around You</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
-        *, *::before, *::after {
+        * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
 
         :root {
-            --primary: #6366f1;
-            --primary-light: #818cf8;
-            --primary-dark: #4f46e5;
-            --accent: #06d6a0;
-            --accent-glow: rgba(6, 214, 160, 0.4);
-            --cyan: #22d3ee;
-            --cyan-glow: rgba(34, 211, 238, 0.3);
-            --magenta: #e879f9;
-            --magenta-glow: rgba(232, 121, 249, 0.3);
-            --dark: #0a0a0f;
-            --darker: #050508;
-            --surface: rgba(255, 255, 255, 0.03);
-            --surface-hover: rgba(255, 255, 255, 0.06);
-            --border: rgba(255, 255, 255, 0.06);
-            --border-glow: rgba(99, 102, 241, 0.3);
-            --text: #f0f0f5;
-            --text-secondary: #a0a0b8;
-            --text-dim: #6b6b80;
-            --glass: rgba(15, 15, 25, 0.7);
-            --glass-border: rgba(255, 255, 255, 0.08);
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --secondary: #10b981;
+            --dark: #0f172a;
+            --darker: #020617;
+            --light: #f8fafc;
+            --gray: #64748b;
+            --gray-light: #94a3b8;
         }
 
         html {
-            scroll-behavior: auto;
-            scrollbar-width: thin;
-            scrollbar-color: var(--primary) var(--darker);
+            scroll-behavior: smooth;
         }
 
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             background: var(--darker);
-            color: var(--text);
+            color: var(--light);
             line-height: 1.6;
             overflow-x: hidden;
-            -webkit-font-smoothing: antialiased;
         }
 
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: var(--darker); }
-        ::-webkit-scrollbar-thumb { background: var(--primary-dark); border-radius: 3px; }
-
-        #webgl-canvas {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            z-index: 0;
-            pointer-events: none;
-        }
-
-        .content-layer {
-            position: relative;
-            z-index: 1;
-        }
-
-        /* ── Reduced Motion ── */
-        @media (prefers-reduced-motion: reduce) {
-            *, *::before, *::after {
-                animation-duration: 0.01ms !important;
-                animation-iteration-count: 1 !important;
-                transition-duration: 0.01ms !important;
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(40px);
             }
-            #webgl-canvas { display: none; }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
-        /* ── Navigation ── */
-        .nav {
+        @keyframes fadeInLeft {
+            from {
+                opacity: 0;
+                transform: translateX(-40px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        @keyframes fadeInRight {
+            from {
+                opacity: 0;
+                transform: translateX(40px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        @keyframes scaleIn {
+            from {
+                opacity: 0;
+                transform: scale(0.9);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        @keyframes float {
+            0%, 100% {
+                transform: translateY(0);
+            }
+            50% {
+                transform: translateY(-20px);
+            }
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(-100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes ripple {
+            0% {
+                transform: scale(1);
+                opacity: 0.5;
+            }
+            100% {
+                transform: scale(2.5);
+                opacity: 0;
+            }
+        }
+
+        @keyframes gradientShift {
+            0% {
+                background-position: 0% 50%;
+            }
+            50% {
+                background-position: 100% 50%;
+            }
+            100% {
+                background-position: 0% 50%;
+            }
+        }
+
+        .animate-on-scroll {
+            opacity: 0;
+            transform: translateY(40px);
+            transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .animate-on-scroll.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .animate-on-scroll.delay-1 {
+            transition-delay: 0.1s;
+        }
+
+        .animate-on-scroll.delay-2 {
+            transition-delay: 0.2s;
+        }
+
+        .animate-on-scroll.delay-3 {
+            transition-delay: 0.3s;
+        }
+
+        .animate-on-scroll.delay-4 {
+            transition-delay: 0.4s;
+        }
+
+        /* Navigation */
+        nav {
             position: fixed;
             top: 0;
             left: 0;
             right: 0;
-            z-index: 100;
-            padding: 1.2rem 5%;
+            z-index: 1000;
+            padding: 1.5rem 5%;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            background: rgba(5, 5, 8, 0.4);
-            backdrop-filter: blur(30px) saturate(1.4);
-            -webkit-backdrop-filter: blur(30px) saturate(1.4);
-            border-bottom: 1px solid var(--glass-border);
-            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            background: rgba(2, 6, 23, 0.8);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            animation: fadeInUp 0.8s ease-out;
         }
 
-        .nav.scrolled {
-            background: rgba(5, 5, 8, 0.85);
-            border-bottom-color: rgba(255, 255, 255, 0.04);
-        }
-
-        .nav-logo {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 1.6rem;
-            font-weight: 700;
-            letter-spacing: -0.02em;
-            background: linear-gradient(135deg, var(--primary-light), var(--accent));
+        .logo {
+            font-size: 1.8rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            text-decoration: none;
         }
 
         .nav-links {
             display: flex;
-            gap: 2.5rem;
+            gap: 2rem;
             list-style: none;
-            align-items: center;
         }
 
         .nav-links a {
-            color: var(--text-secondary);
+            color: var(--gray-light);
             text-decoration: none;
-            font-size: 0.9rem;
             font-weight: 500;
-            letter-spacing: 0.01em;
             transition: color 0.3s ease;
             position: relative;
         }
@@ -136,241 +204,174 @@
         .nav-links a::after {
             content: '';
             position: absolute;
-            bottom: -4px;
+            bottom: -5px;
             left: 0;
             width: 0;
-            height: 1.5px;
-            background: linear-gradient(90deg, var(--primary-light), var(--accent));
+            height: 2px;
+            background: var(--primary);
             transition: width 0.3s ease;
         }
 
-        .nav-links a:hover { color: var(--text); }
-        .nav-links a:hover::after { width: 100%; }
+        .nav-links a:hover {
+            color: var(--light);
+        }
 
-        .nav-cta {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.65rem 1.5rem;
+        .nav-links a:hover::after {
+            width: 100%;
+        }
+
+        .cta-button {
             background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-            color: #fff !important;
+            color: white;
+            padding: 0.8rem 2rem;
             border-radius: 50px;
-            font-weight: 600;
-            font-size: 0.85rem;
-            letter-spacing: 0.02em;
             text-decoration: none;
-            border: none;
-            cursor: pointer;
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 0 20px rgba(99, 102, 241, 0.25);
+            font-weight: 600;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
         }
 
-        .nav-cta:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 0 40px rgba(99, 102, 241, 0.45), 0 4px 20px rgba(0,0,0,0.3);
+        .cta-button::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            transition: width 0.6s ease, height 0.6s ease;
         }
 
-        .nav-cta::after { display: none !important; }
+        .cta-button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 40px rgba(37, 99, 235, 0.4);
+        }
 
-        /* ── Hero Section ── */
+        .cta-button:hover::before {
+            width: 300px;
+            height: 300px;
+        }
+
+        /* Hero Section */
         .hero {
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
             text-align: center;
-            padding: 10rem 5% 6rem;
+            padding: 8rem 5% 4rem;
             position: relative;
             overflow: hidden;
         }
 
-        .hero-bg-gradient {
+        .hero::before {
+            content: '';
             position: absolute;
-            top: -30%;
-            left: -20%;
-            width: 140%;
-            height: 160%;
-            background:
-                radial-gradient(ellipse 600px 400px at 25% 40%, rgba(99, 102, 241, 0.12) 0%, transparent 70%),
-                radial-gradient(ellipse 500px 350px at 75% 60%, rgba(6, 214, 160, 0.08) 0%, transparent 70%),
-                radial-gradient(ellipse 400px 400px at 50% 80%, rgba(232, 121, 249, 0.05) 0%, transparent 60%);
-            pointer-events: none;
-            will-change: transform;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle at 30% 50%, rgba(37, 99, 235, 0.1) 0%, transparent 50%),
+                        radial-gradient(circle at 70% 50%, rgba(16, 185, 129, 0.1) 0%, transparent 50%);
+            animation: gradientShift 15s ease infinite;
+            background-size: 200% 200%;
         }
 
         .hero-content {
             position: relative;
-            z-index: 2;
+            z-index: 1;
             max-width: 900px;
         }
 
         .hero-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.5rem 1.2rem;
-            background: rgba(99, 102, 241, 0.1);
-            border: 1px solid rgba(99, 102, 241, 0.25);
+            display: inline-block;
+            padding: 0.5rem 1.5rem;
+            background: rgba(37, 99, 235, 0.1);
+            border: 1px solid rgba(37, 99, 235, 0.3);
             border-radius: 50px;
-            font-size: 0.82rem;
-            font-weight: 500;
-            color: var(--primary-light);
-            margin-bottom: 2.5rem;
-            letter-spacing: 0.04em;
-            backdrop-filter: blur(10px);
-        }
-
-        .hero-badge .pulse-dot {
-            width: 6px;
-            height: 6px;
-            background: var(--accent);
-            border-radius: 50%;
-            animation: pulseGlow 2s ease-in-out infinite;
-        }
-
-        @keyframes pulseGlow {
-            0%, 100% { box-shadow: 0 0 4px var(--accent), 0 0 8px var(--accent-glow); opacity: 1; }
-            50% { box-shadow: 0 0 12px var(--accent), 0 0 24px var(--accent-glow); opacity: 0.7; }
+            font-size: 0.9rem;
+            color: var(--primary);
+            margin-bottom: 2rem;
+            animation: fadeInUp 0.8s ease-out 0.2s both;
         }
 
         .hero h1 {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: clamp(2.8rem, 7vw, 5.5rem);
-            font-weight: 700;
-            line-height: 1.05;
-            letter-spacing: -0.03em;
-            margin-bottom: 1.8rem;
+            font-size: clamp(2.5rem, 6vw, 4.5rem);
+            font-weight: 800;
+            line-height: 1.1;
+            margin-bottom: 1.5rem;
+            animation: fadeInUp 0.8s ease-out 0.4s both;
         }
 
-        .hero h1 .gradient-text {
-            background: linear-gradient(135deg, var(--primary-light) 0%, var(--accent) 50%, var(--cyan) 100%);
+        .hero h1 span {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            background-size: 200% 200%;
-            animation: gradientFlow 6s ease-in-out infinite;
         }
 
-        @keyframes gradientFlow {
-            0%, 100% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
+        .hero p {
+            font-size: 1.3rem;
+            color: var(--gray-light);
+            margin-bottom: 3rem;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+            animation: fadeInUp 0.8s ease-out 0.6s both;
         }
 
-        .hero-subtitle {
-            font-size: 1.2rem;
-            color: var(--text-secondary);
-            max-width: 580px;
-            margin: 0 auto 3rem;
-            line-height: 1.7;
-            font-weight: 400;
-        }
-
-        .hero-actions {
+        .hero-buttons {
             display: flex;
             gap: 1rem;
             justify-content: center;
             flex-wrap: wrap;
-            margin-bottom: 2rem;
+            animation: fadeInUp 0.8s ease-out 0.8s both;
         }
 
-        .btn-primary {
+        .app-store-button {
             display: inline-flex;
             align-items: center;
-            gap: 0.7rem;
-            padding: 1rem 2.2rem;
-            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-            color: #fff;
-            border-radius: 14px;
+            gap: 0.8rem;
+            background: white;
+            color: black;
+            padding: 1rem 2rem;
+            border-radius: 12px;
             text-decoration: none;
             font-weight: 600;
-            font-size: 1rem;
-            letter-spacing: 0.01em;
-            border: none;
-            cursor: pointer;
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            position: relative;
-            overflow: hidden;
-            box-shadow: 0 0 30px rgba(99, 102, 241, 0.3), inset 0 1px 0 rgba(255,255,255,0.1);
+            transition: all 0.3s ease;
         }
 
-        .btn-primary::before {
-            content: '';
+        .app-store-button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 40px rgba(255, 255, 255, 0.2);
+        }
+
+        .app-store-button svg {
+            width: 24px;
+            height: 24px;
+        }
+
+        .scroll-indicator {
             position: absolute;
-            inset: 0;
-            background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);
-            opacity: 0;
-            transition: opacity 0.3s;
+            bottom: 2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            animation: float 3s ease-in-out infinite;
         }
 
-        .btn-primary:hover {
-            transform: translateY(-3px) scale(1.02);
-            box-shadow: 0 0 50px rgba(99, 102, 241, 0.5), 0 10px 40px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.15);
+        .scroll-indicator svg {
+            width: 30px;
+            height: 30px;
+            color: var(--gray);
         }
 
-        .btn-primary:hover::before { opacity: 1; }
-
-        .btn-primary svg { width: 20px; height: 20px; }
-
-        .btn-ghost {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.6rem;
-            padding: 1rem 2rem;
-            background: rgba(255, 255, 255, 0.04);
-            color: var(--text);
-            border: 1px solid var(--glass-border);
-            border-radius: 14px;
-            text-decoration: none;
-            font-weight: 500;
-            font-size: 1rem;
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            backdrop-filter: blur(10px);
-        }
-
-        .btn-ghost:hover {
-            background: rgba(255, 255, 255, 0.08);
-            border-color: rgba(255, 255, 255, 0.15);
-            transform: translateY(-2px);
-        }
-
-        .hero-metrics {
-            display: flex;
-            justify-content: center;
-            gap: 3rem;
-            margin-top: 4rem;
-        }
-
-        .hero-metric {
-            text-align: center;
-        }
-
-        .hero-metric-value {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 1.8rem;
-            font-weight: 700;
-            color: var(--text);
-        }
-
-        .hero-metric-label {
-            font-size: 0.8rem;
-            color: var(--text-dim);
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            margin-top: 0.2rem;
-        }
-
-        /* ── Section Divider ── */
-        .section-divider {
-            width: 100%;
-            height: 1px;
-            background: linear-gradient(90deg, transparent, var(--border-glow), transparent);
-            opacity: 0.5;
-        }
-
-        /* ── Features Section ── */
+        /* Features Section */
         .features {
-            padding: 10rem 5%;
-            position: relative;
+            padding: 8rem 5%;
+            background: var(--dark);
         }
 
         .section-header {
@@ -378,53 +379,35 @@
             margin-bottom: 5rem;
         }
 
-        .section-label {
-            display: inline-block;
-            font-size: 0.75rem;
-            font-weight: 600;
-            letter-spacing: 0.15em;
-            text-transform: uppercase;
-            color: var(--accent);
-            margin-bottom: 1rem;
-            padding: 0.4rem 1rem;
-            background: rgba(6, 214, 160, 0.08);
-            border: 1px solid rgba(6, 214, 160, 0.15);
-            border-radius: 50px;
-        }
-
-        .section-title {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: clamp(2rem, 4vw, 3.2rem);
+        .section-header h2 {
+            font-size: clamp(2rem, 4vw, 3rem);
             font-weight: 700;
-            letter-spacing: -0.02em;
             margin-bottom: 1rem;
         }
 
-        .section-subtitle {
+        .section-header p {
             font-size: 1.1rem;
-            color: var(--text-secondary);
-            max-width: 550px;
+            color: var(--gray-light);
+            max-width: 600px;
             margin: 0 auto;
         }
 
         .features-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 1.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
             max-width: 1200px;
             margin: 0 auto;
         }
 
         .feature-card {
-            background: var(--surface);
-            border: 1px solid var(--border);
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+            border: 1px solid rgba(255, 255, 255, 0.05);
             border-radius: 20px;
             padding: 2.5rem;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
             position: relative;
             overflow: hidden;
-            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-            backdrop-filter: blur(20px);
-            will-change: transform;
         }
 
         .feature-card::before {
@@ -433,260 +416,160 @@
             top: 0;
             left: 0;
             right: 0;
-            height: 1px;
-            background: linear-gradient(90deg, transparent, var(--primary-light), transparent);
-            opacity: 0;
-            transition: opacity 0.4s ease;
-        }
-
-        .feature-card::after {
-            content: '';
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(99, 102, 241, 0.06), transparent 50%);
-            pointer-events: none;
-            opacity: 0;
-            transition: opacity 0.4s;
+            height: 3px;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            transform: scaleX(0);
+            transition: transform 0.4s ease;
         }
 
         .feature-card:hover {
-            transform: translateY(-8px);
-            border-color: rgba(99, 102, 241, 0.2);
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4), 0 0 40px rgba(99, 102, 241, 0.08);
+            transform: translateY(-10px);
+            border-color: rgba(37, 99, 235, 0.3);
+            box-shadow: 0 20px 60px rgba(37, 99, 235, 0.1);
         }
 
-        .feature-card:hover::before { opacity: 1; }
-        .feature-card:hover::after { opacity: 1; }
+        .feature-card:hover::before {
+            transform: scaleX(1);
+        }
 
-        .feature-icon-wrap {
-            width: 56px;
-            height: 56px;
-            border-radius: 16px;
+        .feature-icon {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, rgba(37, 99, 235, 0.2), rgba(16, 185, 129, 0.2));
+            border-radius: 15px;
             display: flex;
             align-items: center;
             justify-content: center;
             margin-bottom: 1.5rem;
-            position: relative;
-            font-size: 1.5rem;
+            font-size: 1.8rem;
+            transition: transform 0.3s ease;
         }
 
-        .feature-icon-wrap.indigo {
-            background: rgba(99, 102, 241, 0.12);
-            border: 1px solid rgba(99, 102, 241, 0.2);
-            color: var(--primary-light);
-        }
-
-        .feature-icon-wrap.green {
-            background: rgba(6, 214, 160, 0.1);
-            border: 1px solid rgba(6, 214, 160, 0.2);
-            color: var(--accent);
-        }
-
-        .feature-icon-wrap.cyan {
-            background: rgba(34, 211, 238, 0.1);
-            border: 1px solid rgba(34, 211, 238, 0.2);
-            color: var(--cyan);
-        }
-
-        .feature-icon-wrap.magenta {
-            background: rgba(232, 121, 249, 0.1);
-            border: 1px solid rgba(232, 121, 249, 0.2);
-            color: var(--magenta);
+        .feature-card:hover .feature-icon {
+            transform: scale(1.1) rotate(5deg);
         }
 
         .feature-card h3 {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 1.2rem;
+            font-size: 1.3rem;
             font-weight: 600;
-            margin-bottom: 0.6rem;
-            letter-spacing: -0.01em;
+            margin-bottom: 0.8rem;
         }
 
         .feature-card p {
-            color: var(--text-secondary);
-            font-size: 0.92rem;
-            line-height: 1.65;
+            color: var(--gray-light);
+            font-size: 0.95rem;
         }
 
-        /* ── Light Beam Connectors ── */
-        .light-beams {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: 0;
-        }
-
-        /* ── How It Works / Product Section ── */
+        /* How It Works */
         .how-it-works {
-            padding: 10rem 5%;
-            position: relative;
+            padding: 8rem 5%;
+            background: var(--darker);
         }
 
-        .steps-container {
-            max-width: 1100px;
+        .steps {
+            max-width: 900px;
             margin: 0 auto;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 4rem;
-            align-items: center;
-        }
-
-        .steps-visual {
-            position: relative;
-            height: 500px;
-            border-radius: 24px;
-            overflow: hidden;
-            background: var(--surface);
-            border: 1px solid var(--border);
-        }
-
-        .steps-visual canvas {
-            width: 100%;
-            height: 100%;
-        }
-
-        .steps-list {
-            display: flex;
-            flex-direction: column;
-            gap: 2rem;
-        }
-
-        .step-item {
-            display: flex;
-            gap: 1.5rem;
-            padding: 1.5rem;
-            border-radius: 16px;
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            cursor: default;
             position: relative;
         }
 
-        .step-item::before {
+        .steps::before {
             content: '';
             position: absolute;
-            inset: 0;
-            border-radius: 16px;
-            background: linear-gradient(135deg, rgba(99, 102, 241, 0.05), rgba(6, 214, 160, 0.03));
-            opacity: 0;
-            transition: opacity 0.4s;
+            left: 30px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: linear-gradient(to bottom, var(--primary), var(--secondary));
         }
 
-        .step-item.active::before,
-        .step-item:hover::before { opacity: 1; }
-
-        .step-item.active,
-        .step-item:hover {
-            transform: translateX(8px);
+        .step {
+            display: flex;
+            gap: 3rem;
+            margin-bottom: 4rem;
+            position: relative;
         }
 
         .step-number {
-            width: 48px;
-            height: 48px;
-            min-width: 48px;
-            border-radius: 14px;
+            width: 60px;
+            height: 60px;
+            min-width: 60px;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 1.1rem;
+            font-size: 1.5rem;
             font-weight: 700;
-            background: rgba(99, 102, 241, 0.12);
-            border: 1px solid rgba(99, 102, 241, 0.25);
-            color: var(--primary-light);
             position: relative;
             z-index: 1;
         }
 
-        .step-item.active .step-number {
-            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-            color: #fff;
-            box-shadow: 0 0 20px rgba(99, 102, 241, 0.3);
+        .step-content {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            padding: 2rem;
+            flex: 1;
+            transition: all 0.3s ease;
         }
 
-        .step-info {
-            position: relative;
-            z-index: 1;
+        .step-content:hover {
+            border-color: rgba(37, 99, 235, 0.3);
+            transform: translateX(10px);
         }
 
-        .step-info h3 {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 1.15rem;
-            font-weight: 600;
-            margin-bottom: 0.4rem;
+        .step-content h3 {
+            font-size: 1.3rem;
+            margin-bottom: 0.8rem;
         }
 
-        .step-info p {
-            color: var(--text-secondary);
-            font-size: 0.9rem;
-            line-height: 1.6;
+        .step-content p {
+            color: var(--gray-light);
         }
 
-        /* ── Testimonials ── */
+        /* Testimonials */
         .testimonials {
-            padding: 10rem 5%;
-            position: relative;
-            overflow: hidden;
+            padding: 8rem 5%;
+            background: var(--dark);
         }
 
         .testimonials-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 1.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 2rem;
             max-width: 1200px;
             margin: 0 auto;
-            perspective: 1000px;
         }
 
         .testimonial-card {
-            background: linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01));
-            border: 1px solid var(--border);
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+            border: 1px solid rgba(255, 255, 255, 0.08);
             border-radius: 20px;
             padding: 2.5rem;
             position: relative;
-            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-            backdrop-filter: blur(20px);
-            transform-style: preserve-3d;
+            transition: all 0.4s ease;
+        }
+
+        .testimonial-card:hover {
+            transform: translateY(-5px);
+            border-color: rgba(37, 99, 235, 0.3);
         }
 
         .testimonial-card::before {
-            content: '';
+            content: '"';
             position: absolute;
-            inset: -1px;
-            border-radius: 21px;
-            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(6, 214, 160, 0.1), rgba(232, 121, 249, 0.08));
-            z-index: -1;
-            opacity: 0;
-            transition: opacity 0.5s;
+            top: 1rem;
+            left: 1.5rem;
+            font-size: 4rem;
+            color: rgba(37, 99, 235, 0.2);
+            font-family: Georgia, serif;
+            line-height: 1;
         }
 
-        .testimonial-card:hover::before { opacity: 1; }
-
-        .testimonial-card:hover {
-            transform: translateY(-10px) rotateX(2deg);
-            border-color: rgba(99, 102, 241, 0.2);
-            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5), 0 0 40px rgba(99, 102, 241, 0.05);
-        }
-
-        .testimonial-stars {
-            display: flex;
-            gap: 0.15rem;
-            margin-bottom: 1.2rem;
-            color: #fbbf24;
-            font-size: 0.9rem;
-        }
-
-        .testimonial-card blockquote {
-            font-size: 1rem;
+        .testimonial-card p {
+            font-size: 1.1rem;
             line-height: 1.7;
-            color: var(--text-secondary);
-            margin-bottom: 1.8rem;
-            font-style: normal;
+            margin-bottom: 1.5rem;
             position: relative;
             z-index: 1;
         }
@@ -695,41 +578,34 @@
             display: flex;
             align-items: center;
             gap: 1rem;
-            position: relative;
-            z-index: 1;
         }
 
         .testimonial-avatar {
-            width: 44px;
-            height: 44px;
-            border-radius: 12px;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
             display: flex;
             align-items: center;
             justify-content: center;
-            font-weight: 700;
-            font-size: 1rem;
-            color: #fff;
+            font-weight: 600;
+            font-size: 1.2rem;
         }
-
-        .testimonial-avatar.a { background: linear-gradient(135deg, var(--primary), var(--primary-dark)); }
-        .testimonial-avatar.b { background: linear-gradient(135deg, var(--accent), #059669); }
-        .testimonial-avatar.c { background: linear-gradient(135deg, var(--magenta), #c026d3); }
 
         .testimonial-name {
             font-weight: 600;
-            font-size: 0.95rem;
         }
 
         .testimonial-role {
-            font-size: 0.8rem;
-            color: var(--text-dim);
+            font-size: 0.9rem;
+            color: var(--gray);
         }
 
-        /* ── Security ── */
+        /* Security Section */
         .security {
-            padding: 10rem 5%;
+            padding: 8rem 5%;
+            background: var(--darker);
             text-align: center;
-            position: relative;
         }
 
         .security-content {
@@ -737,68 +613,34 @@
             margin: 0 auto;
         }
 
-        .security-orb {
-            width: 120px;
-            height: 120px;
-            margin: 0 auto 2.5rem;
+        .security-icon {
+            width: 100px;
+            height: 100px;
+            margin: 0 auto 2rem;
+            background: linear-gradient(135deg, rgba(37, 99, 235, 0.2), rgba(16, 185, 129, 0.2));
             border-radius: 50%;
-            background: radial-gradient(circle at 35% 35%, rgba(99, 102, 241, 0.3), rgba(6, 214, 160, 0.15), transparent);
-            border: 1px solid rgba(99, 102, 241, 0.2);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 2.5rem;
-            position: relative;
-            animation: orbFloat 5s ease-in-out infinite;
-        }
-
-        .security-orb::before {
-            content: '';
-            position: absolute;
-            inset: -20px;
-            border-radius: 50%;
-            border: 1px solid rgba(99, 102, 241, 0.08);
-            animation: orbPulse 3s ease-in-out infinite;
-        }
-
-        .security-orb::after {
-            content: '';
-            position: absolute;
-            inset: -40px;
-            border-radius: 50%;
-            border: 1px solid rgba(99, 102, 241, 0.04);
-            animation: orbPulse 3s ease-in-out infinite 0.5s;
-        }
-
-        @keyframes orbFloat {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-12px); }
-        }
-
-        @keyframes orbPulse {
-            0%, 100% { opacity: 0.5; transform: scale(1); }
-            50% { opacity: 1; transform: scale(1.05); }
+            font-size: 3rem;
+            animation: float 4s ease-in-out infinite;
         }
 
         .security h2 {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: clamp(2rem, 4vw, 2.8rem);
-            font-weight: 700;
-            letter-spacing: -0.02em;
-            margin-bottom: 1.2rem;
+            font-size: clamp(2rem, 4vw, 3rem);
+            margin-bottom: 1.5rem;
         }
 
-        .security-desc {
+        .security p {
             font-size: 1.1rem;
-            color: var(--text-secondary);
-            line-height: 1.7;
-            margin-bottom: 0.8rem;
+            color: var(--gray-light);
+            margin-bottom: 1rem;
         }
 
         .security-badges {
             display: flex;
             justify-content: center;
-            gap: 1rem;
+            gap: 2rem;
             margin-top: 3rem;
             flex-wrap: wrap;
         }
@@ -807,61 +649,30 @@
             display: flex;
             align-items: center;
             gap: 0.5rem;
-            padding: 0.7rem 1.3rem;
-            background: var(--surface);
-            border: 1px solid var(--border);
+            padding: 0.8rem 1.5rem;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
             border-radius: 50px;
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-            backdrop-filter: blur(10px);
-            transition: all 0.3s ease;
+            font-size: 0.9rem;
         }
 
-        .security-badge:hover {
-            border-color: rgba(99, 102, 241, 0.3);
-            background: rgba(99, 102, 241, 0.06);
-            transform: translateY(-2px);
-        }
-
-        .security-badge span { font-size: 1rem; }
-
-        /* ── CTA Section ── */
+        /* CTA Section */
         .cta-section {
-            padding: 10rem 5%;
+            padding: 8rem 5%;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
             text-align: center;
             position: relative;
             overflow: hidden;
         }
 
-        .cta-bg {
+        .cta-section::before {
+            content: '';
             position: absolute;
-            inset: 0;
-            background:
-                radial-gradient(ellipse 800px 500px at 50% 50%, rgba(99, 102, 241, 0.12) 0%, transparent 70%),
-                radial-gradient(ellipse 600px 400px at 30% 60%, rgba(6, 214, 160, 0.06) 0%, transparent 60%),
-                radial-gradient(ellipse 500px 350px at 70% 40%, rgba(232, 121, 249, 0.04) 0%, transparent 50%);
-            pointer-events: none;
-        }
-
-        .cta-ring {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 500px;
-            height: 500px;
-            border-radius: 50%;
-            border: 1px solid rgba(99, 102, 241, 0.1);
-            animation: ctaRingExpand 4s ease-in-out infinite;
-            pointer-events: none;
-        }
-
-        .cta-ring:nth-child(2) { animation-delay: 1s; width: 600px; height: 600px; border-color: rgba(6, 214, 160, 0.07); }
-        .cta-ring:nth-child(3) { animation-delay: 2s; width: 700px; height: 700px; border-color: rgba(232, 121, 249, 0.05); }
-
-        @keyframes ctaRingExpand {
-            0%, 100% { opacity: 0.3; transform: translate(-50%, -50%) scale(0.95); }
-            50% { opacity: 0.7; transform: translate(-50%, -50%) scale(1.05); }
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
         }
 
         .cta-content {
@@ -872,942 +683,440 @@
         }
 
         .cta-section h2 {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: clamp(2.2rem, 5vw, 3.5rem);
-            font-weight: 700;
-            letter-spacing: -0.03em;
-            line-height: 1.1;
+            font-size: clamp(2rem, 5vw, 3.5rem);
             margin-bottom: 1.5rem;
+            color: white;
         }
 
         .cta-section p {
-            font-size: 1.15rem;
-            color: var(--text-secondary);
+            font-size: 1.2rem;
             margin-bottom: 2.5rem;
-            line-height: 1.7;
+            opacity: 0.9;
         }
 
-        .cta-actions {
-            display: flex;
-            gap: 1rem;
-            justify-content: center;
-            flex-wrap: wrap;
+        .cta-section .app-store-button {
+            background: var(--dark);
+            color: white;
+            font-size: 1.1rem;
+            padding: 1.2rem 2.5rem;
         }
 
-        /* ── Footer ── */
-        .site-footer {
+        .cta-section .app-store-button:hover {
+            background: var(--darker);
+            box-shadow: 0 15px 50px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Footer */
+        footer {
             padding: 4rem 5% 2rem;
-            border-top: 1px solid var(--border);
-            position: relative;
+            background: var(--darker);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
         }
 
-        .footer-grid {
+        .footer-content {
             max-width: 1200px;
             margin: 0 auto;
             display: grid;
-            grid-template-columns: 2fr 1fr 1fr 1fr;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 3rem;
             margin-bottom: 3rem;
         }
 
-        .footer-brand .footer-logo {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 1.5rem;
-            font-weight: 700;
-            background: linear-gradient(135deg, var(--primary-light), var(--accent));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin-bottom: 0.8rem;
-        }
-
-        .footer-brand p {
-            color: var(--text-dim);
-            font-size: 0.9rem;
-            line-height: 1.6;
-        }
-
-        .footer-col h4 {
-            font-size: 0.85rem;
+        .footer-section h4 {
+            font-size: 1rem;
             font-weight: 600;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-            color: var(--text-secondary);
-            margin-bottom: 1.2rem;
+            margin-bottom: 1.5rem;
+            color: var(--light);
         }
 
-        .footer-col a {
+        .footer-section a {
             display: block;
-            color: var(--text-dim);
+            color: var(--gray);
             text-decoration: none;
-            font-size: 0.9rem;
-            padding: 0.3rem 0;
+            margin-bottom: 0.8rem;
             transition: color 0.3s ease;
         }
 
-        .footer-col a:hover { color: var(--primary-light); }
+        .footer-section a:hover {
+            color: var(--primary);
+        }
 
         .footer-bottom {
             text-align: center;
             padding-top: 2rem;
-            border-top: 1px solid var(--border);
-            color: var(--text-dim);
-            font-size: 0.82rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            color: var(--gray);
+            font-size: 0.9rem;
         }
 
-        /* ── Reveal Animations ── */
-        .reveal {
-            opacity: 0;
-            transform: translateY(40px);
-            transition: opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1), transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+        .footer-logo {
+            font-size: 1.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 1rem;
         }
 
-        .reveal.visible {
-            opacity: 1;
-            transform: translateY(0);
-        }
-
-        .reveal-delay-1 { transition-delay: 0.1s; }
-        .reveal-delay-2 { transition-delay: 0.2s; }
-        .reveal-delay-3 { transition-delay: 0.3s; }
-        .reveal-delay-4 { transition-delay: 0.4s; }
-        .reveal-delay-5 { transition-delay: 0.5s; }
-
-        /* ── Cursor Glow ── */
-        .cursor-glow {
-            position: fixed;
-            width: 300px;
-            height: 300px;
-            border-radius: 50%;
-            background: radial-gradient(circle, rgba(99, 102, 241, 0.06) 0%, transparent 70%);
-            pointer-events: none;
-            z-index: 0;
-            transform: translate(-50%, -50%);
-            transition: opacity 0.3s;
-            will-change: left, top;
-        }
-
-        /* ── Mobile ── */
-        @media (max-width: 1024px) {
-            .features-grid { grid-template-columns: repeat(2, 1fr); }
-            .steps-container { grid-template-columns: 1fr; }
-            .steps-visual { display: none; }
-            .testimonials-grid { grid-template-columns: repeat(2, 1fr); }
-            .footer-grid { grid-template-columns: 1fr 1fr; }
-        }
-
+        /* Responsive */
         @media (max-width: 768px) {
-            .nav-links { display: none; }
-            .hero { padding: 8rem 5% 4rem; }
-            .hero h1 { font-size: 2.5rem; }
-            .hero-metrics { gap: 1.5rem; }
-            .hero-metric-value { font-size: 1.4rem; }
-            .features-grid { grid-template-columns: 1fr; }
-            .testimonials-grid { grid-template-columns: 1fr; }
-            .security-badges { flex-direction: column; align-items: center; }
-            .footer-grid { grid-template-columns: 1fr; }
+            .nav-links {
+                display: none;
+            }
+
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+
+            .step {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .steps::before {
+                left: 30px;
+            }
+
+            .step-number {
+                width: 50px;
+                height: 50px;
+                min-width: 50px;
+                font-size: 1.2rem;
+            }
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--darker);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--primary);
+            border-radius: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--primary-dark);
         }
     </style>
 </head>
 <body>
-    <div class="cursor-glow" id="cursorGlow"></div>
+    <!-- Navigation -->
+    <nav>
+        <div class="logo">Lokaal</div>
+        <ul class="nav-links">
+            <li><a href="#features">Features</a></li>
+            <li><a href="#how-it-works">How It Works</a></li>
+            <li><a href="#testimonials">Stories</a></li>
+            <li><a href="#security">Security</a></li>
+        </ul>
+        <a href="#download" class="cta-button">Download</a>
+    </nav>
 
-    <canvas id="webgl-canvas"></canvas>
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-content">
+            <div class="hero-badge">✨ Now available on iOS</div>
+            <h1>Meet People Who Are<br><span>Actually Around You</span></h1>
+            <p>Turn real-world encounters into real friendships. No swiping. No algorithms pushing strangers. Just the people you've genuinely crossed paths with.</p>
+            <div class="hero-buttons">
+                <a href="#download" class="app-store-button">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+                    </svg>
+                    Download on the App Store
+                </a>
+            </div>
+        </div>
+        <div class="scroll-indicator">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 5v14M19 12l-7 7-7-7"/>
+            </svg>
+        </div>
+    </section>
 
-    <div class="content-layer">
-        <!-- Navigation -->
-        <nav class="nav" id="mainNav">
-            <a href="#" class="nav-logo">Lokaal</a>
-            <ul class="nav-links">
-                <li><a href="#features">Features</a></li>
-                <li><a href="#how-it-works">How It Works</a></li>
-                <li><a href="#testimonials">Stories</a></li>
-                <li><a href="#security">Security</a></li>
-            </ul>
-            <a href="#download" class="nav-cta">Download</a>
-        </nav>
+    <!-- Features Section -->
+    <section class="features" id="features">
+        <div class="section-header animate-on-scroll">
+            <h2>Why Lokaal Is Different</h2>
+            <p>Not a dating app. Not a social network. A meeting app.</p>
+        </div>
+        <div class="features-grid">
+            <div class="feature-card animate-on-scroll delay-1">
+                <div class="feature-icon">📍</div>
+                <h3>Spatial Awareness</h3>
+                <p>Lokaal knows when you're near someone you'd click with — shared interests, similar vibes, same neighborhood.</p>
+            </div>
+            <div class="feature-card animate-on-scroll delay-2">
+                <div class="feature-icon">🏠</div>
+                <h3>Fair Meetups</h3>
+                <p>Every suggestion picks a place that's convenient for both people. No one-sided "meet me on my side of town."</p>
+            </div>
+            <div class="feature-card animate-on-scroll delay-3">
+                <div class="feature-icon">🔒</div>
+                <h3>Private by Design</h3>
+                <p>Your exact location is never exposed. Lokaal only knows you're "somewhere in this area" — never precisely where.</p>
+            </div>
+            <div class="feature-card animate-on-scroll delay-4">
+                <div class="feature-icon">🌍</div>
+                <h3>10+ Languages</h3>
+                <p>Because real life happens everywhere. Lokaal speaks your language.</p>
+            </div>
+            <div class="feature-card animate-on-scroll delay-1">
+                <div class="feature-icon">⚡</div>
+                <h3>Works in Background</h3>
+                <p>No need to keep the app open. Lokaal quietly works behind the scenes and only alerts you when something good happens.</p>
+            </div>
+            <div class="feature-card animate-on-scroll delay-2">
+                <div class="feature-icon">🤝</div>
+                <h3>Real Connections Only</h3>
+                <p>Only suggests people you've actually encountered in the real world. No random strangers from the internet.</p>
+            </div>
+        </div>
+    </section>
 
-        <!-- Hero -->
-        <section class="hero" id="hero">
-            <div class="hero-bg-gradient" id="heroBg"></div>
-            <div class="hero-content">
-                <div class="hero-badge reveal">
-                    <span class="pulse-dot"></span>
-                    Now available on iOS
+    <!-- How It Works -->
+    <section class="how-it-works" id="how-it-works">
+        <div class="section-header animate-on-scroll">
+            <h2>How It Works</h2>
+            <p>Three simple steps from encounter to friendship</p>
+        </div>
+        <div class="steps">
+            <div class="step animate-on-scroll">
+                <div class="step-number">1</div>
+                <div class="step-content">
+                    <h3>Lokaal detects nearby people</h3>
+                    <p>As you go about your day, Lokaal quietly notices when you're in the same area as someone you'd get along with — shared interests, similar vibes, same neighborhood.</p>
                 </div>
-                <h1 class="reveal reveal-delay-1">
-                    Meet People Who Are<br><span class="gradient-text">Actually Around You</span>
-                </h1>
-                <p class="hero-subtitle reveal reveal-delay-2">
-                    Turn real-world encounters into real friendships. No swiping. No algorithms pushing strangers. Just the people you've genuinely crossed paths with.
-                </p>
-                <div class="hero-actions reveal reveal-delay-3">
-                    <a href="#download" class="btn-primary">
-                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-                        Download on the App Store
-                    </a>
-                    <a href="#how-it-works" class="btn-ghost">
-                        See How It Works
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    </a>
+            </div>
+            <div class="step animate-on-scroll">
+                <div class="step-number">2</div>
+                <div class="step-content">
+                    <h3>It suggests a specific place</h3>
+                    <p>Not a vague "you should hang out." A real café, a real park, a real restaurant — picked as a fair midpoint between both of you.</p>
                 </div>
-                <div class="hero-metrics reveal reveal-delay-4">
-                    <div class="hero-metric">
-                        <div class="hero-metric-value" data-count="50">0</div>
-                        <div class="hero-metric-label">Cities</div>
-                    </div>
-                    <div class="hero-metric">
-                        <div class="hero-metric-value" data-count="12">0</div>
-                        <div class="hero-metric-label">Languages</div>
-                    </div>
-                    <div class="hero-metric">
-                        <div class="hero-metric-value" data-count="100" data-suffix="%">0</div>
-                        <div class="hero-metric-label">Encrypted</div>
+            </div>
+            <div class="step animate-on-scroll">
+                <div class="step-number">3</div>
+                <div class="step-content">
+                    <h3>You both get a notification</h3>
+                    <p>"Hey, you and Sarah both love indie music — and there's a vinyl café halfway between you. This Saturday at 3pm?" Done.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Testimonials -->
+    <section class="testimonials" id="testimonials">
+        <div class="section-header animate-on-scroll">
+            <h2>What People Are Saying</h2>
+            <p>Real stories from real Lokaal users</p>
+        </div>
+        <div class="testimonials-grid">
+            <div class="testimonial-card animate-on-scroll delay-1">
+                <p>I met my now-best-friend at a coffee shop Lokaal suggested. We were in the same co-working space for weeks and never talked.</p>
+                <div class="testimonial-author">
+                    <div class="testimonial-avatar">M</div>
+                    <div>
+                        <div class="testimonial-name">Maya K.</div>
+                        <div class="testimonial-role">Designer, Bangalore</div>
                     </div>
                 </div>
             </div>
-        </section>
-
-        <div class="section-divider"></div>
-
-        <!-- Features -->
-        <section class="features" id="features">
-            <div class="section-header">
-                <span class="section-label reveal">Features</span>
-                <h2 class="section-title reveal reveal-delay-1">Why Lokaal Is Different</h2>
-                <p class="section-subtitle reveal reveal-delay-2">Not a dating app. Not a social network. A meeting app.</p>
-            </div>
-            <div class="features-grid">
-                <div class="feature-card reveal reveal-delay-1">
-                    <div class="feature-icon-wrap indigo">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                    </div>
-                    <h3>Spatial Awareness</h3>
-                    <p>Lokaal knows when you're near someone you'd click with — shared interests, similar vibes, same neighborhood.</p>
-                </div>
-                <div class="feature-card reveal reveal-delay-2">
-                    <div class="feature-icon-wrap green">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-                    </div>
-                    <h3>Fair Meetups</h3>
-                    <p>Every suggestion picks a place that's convenient for both people. No one-sided "meet me on my side of town."</p>
-                </div>
-                <div class="feature-card reveal reveal-delay-3">
-                    <div class="feature-icon-wrap cyan">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                    </div>
-                    <h3>Private by Design</h3>
-                    <p>Your exact location is never exposed. Lokaal only knows you're "somewhere in this area" — never precisely where.</p>
-                </div>
-                <div class="feature-card reveal reveal-delay-1">
-                    <div class="feature-icon-wrap magenta">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                    </div>
-                    <h3>12+ Languages</h3>
-                    <p>Because real life happens everywhere. Lokaal speaks your language, wherever you are.</p>
-                </div>
-                <div class="feature-card reveal reveal-delay-2">
-                    <div class="feature-icon-wrap indigo">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                    </div>
-                    <h3>Works in Background</h3>
-                    <p>No need to keep the app open. Lokaal quietly works behind the scenes and only alerts you when something good happens.</p>
-                </div>
-                <div class="feature-card reveal reveal-delay-3">
-                    <div class="feature-icon-wrap green">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                    </div>
-                    <h3>Real Connections Only</h3>
-                    <p>Only suggests people you've actually encountered in the real world. No random strangers from the internet.</p>
-                </div>
-            </div>
-        </section>
-
-        <div class="section-divider"></div>
-
-        <!-- How It Works -->
-        <section class="how-it-works" id="how-it-works">
-            <div class="section-header">
-                <span class="section-label reveal">Process</span>
-                <h2 class="section-title reveal reveal-delay-1">How It Works</h2>
-                <p class="section-subtitle reveal reveal-delay-2">Three simple steps from encounter to friendship</p>
-            </div>
-            <div class="steps-container">
-                <div class="steps-visual reveal">
-                    <canvas id="productCanvas"></canvas>
-                </div>
-                <div class="steps-list">
-                    <div class="step-item active reveal reveal-delay-1" data-step="0">
-                        <div class="step-number">01</div>
-                        <div class="step-info">
-                            <h3>Lokaal detects nearby people</h3>
-                            <p>As you go about your day, Lokaal quietly notices when you're in the same area as someone you'd get along with.</p>
-                        </div>
-                    </div>
-                    <div class="step-item reveal reveal-delay-2" data-step="1">
-                        <div class="step-number">02</div>
-                        <div class="step-info">
-                            <h3>It suggests a specific place</h3>
-                            <p>Not a vague "you should hang out." A real café, a real park, a real restaurant — picked as a fair midpoint between both of you.</p>
-                        </div>
-                    </div>
-                    <div class="step-item reveal reveal-delay-3" data-step="2">
-                        <div class="step-number">03</div>
-                        <div class="step-info">
-                            <h3>You both get a notification</h3>
-                            <p>"Hey, you and Sarah both love indie music — and there's a vinyl café halfway between you. This Saturday at 3pm?" Done.</p>
-                        </div>
+            <div class="testimonial-card animate-on-scroll delay-2">
+                <p>Finally, an app that doesn't feel creepy. It just connects you with people you've actually been near. No pressure, no weirdness.</p>
+                <div class="testimonial-author">
+                    <div class="testimonial-avatar">R</div>
+                    <div>
+                        <div class="testimonial-name">Rohan P.</div>
+                        <div class="testimonial-role">Startup Founder, Delhi</div>
                     </div>
                 </div>
             </div>
-        </section>
-
-        <div class="section-divider"></div>
-
-        <!-- Testimonials -->
-        <section class="testimonials" id="testimonials">
-            <div class="section-header">
-                <span class="section-label reveal">Testimonials</span>
-                <h2 class="section-title reveal reveal-delay-1">What People Are Saying</h2>
-                <p class="section-subtitle reveal reveal-delay-2">Real stories from real Lokaal users</p>
-            </div>
-            <div class="testimonials-grid">
-                <div class="testimonial-card reveal reveal-delay-1">
-                    <div class="testimonial-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-                    <blockquote>I met my now-best-friend at a coffee shop Lokaal suggested. We were in the same co-working space for weeks and never talked.</blockquote>
-                    <div class="testimonial-author">
-                        <div class="testimonial-avatar a">M</div>
-                        <div>
-                            <div class="testimonial-name">Maya K.</div>
-                            <div class="testimonial-role">Designer, Bangalore</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="testimonial-card reveal reveal-delay-2">
-                    <div class="testimonial-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-                    <blockquote>Finally, an app that doesn't feel creepy. It just connects you with people you've actually been near. No pressure, no weirdness.</blockquote>
-                    <div class="testimonial-author">
-                        <div class="testimonial-avatar b">R</div>
-                        <div>
-                            <div class="testimonial-name">Rohan P.</div>
-                            <div class="testimonial-role">Startup Founder, Delhi</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="testimonial-card reveal reveal-delay-3">
-                    <div class="testimonial-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-                    <blockquote>I was new to the city and Lokaal helped me find people who shared my interests in my own neighborhood. Game changer.</blockquote>
-                    <div class="testimonial-author">
-                        <div class="testimonial-avatar c">S</div>
-                        <div>
-                            <div class="testimonial-name">Sneha M.</div>
-                            <div class="testimonial-role">Student, Mumbai</div>
-                        </div>
+            <div class="testimonial-card animate-on-scroll delay-3">
+                <p>I was new to the city and Lokaal helped me find people who shared my interests in my own neighborhood. Game changer.</p>
+                <div class="testimonial-author">
+                    <div class="testimonial-avatar">S</div>
+                    <div>
+                        <div class="testimonial-name">Sneha M.</div>
+                        <div class="testimonial-role">Student, Mumbai</div>
                     </div>
                 </div>
             </div>
-        </section>
+        </div>
+    </section>
 
-        <div class="section-divider"></div>
-
-        <!-- Security -->
-        <section class="security" id="security">
-            <div class="security-content">
-                <div class="security-orb reveal">
-                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary-light)"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    <!-- Security -->
+    <section class="security" id="security">
+        <div class="security-content animate-on-scroll">
+            <div class="security-icon">🛡️</div>
+            <h2>Security You Can Trust</h2>
+            <p>Your messages and data are protected with post-quantum encryption — the same level of security used by the world's most trusted messaging platforms. Even we can't read your conversations.</p>
+            <p>Your location is never shared precisely. Your connections are always mutual. Your privacy is non-negotiable.</p>
+            <div class="security-badges">
+                <div class="security-badge">
+                    <span>🔒</span> End-to-end encrypted
                 </div>
-                <h2 class="reveal reveal-delay-1">Security You Can Trust</h2>
-                <p class="security-desc reveal reveal-delay-2">Your messages and data are protected with post-quantum encryption — the same level of security used by the world's most trusted platforms. Even we can't read your conversations.</p>
-                <p class="security-desc reveal reveal-delay-3">Your location is never shared precisely. Your connections are always mutual. Your privacy is non-negotiable.</p>
-                <div class="security-badges reveal reveal-delay-4">
-                    <div class="security-badge"><span>&#128274;</span> End-to-end encrypted</div>
-                    <div class="security-badge"><span>&#128737;</span> Post-quantum secure</div>
-                    <div class="security-badge"><span>&#128065;</span> Zero location tracking</div>
+                <div class="security-badge">
+                    <span>🛡️</span> Post-quantum secure
+                </div>
+                <div class="security-badge">
+                    <span>👁️</span> Zero location tracking
                 </div>
             </div>
-        </section>
+        </div>
+    </section>
 
-        <div class="section-divider"></div>
+    <!-- CTA Section -->
+    <section class="cta-section" id="download">
+        <div class="cta-content animate-on-scroll">
+            <h2>Turn Near-Misses Into Real Friendships</h2>
+            <p>Download Lokaal and start meeting the interesting people who are already around you.</p>
+            <a href="https://apps.apple.com/app/lokaal" class="app-store-button" target="_blank">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="28" height="28">
+                    <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+                </svg>
+                Download on the App Store
+            </a>
+        </div>
+    </section>
 
-        <!-- CTA -->
-        <section class="cta-section" id="download">
-            <div class="cta-bg"></div>
-            <div class="cta-ring"></div>
-            <div class="cta-ring"></div>
-            <div class="cta-ring"></div>
-            <div class="cta-content">
-                <h2 class="reveal">Turn Near-Misses Into<br><span class="gradient-text">Real Friendships</span></h2>
-                <p class="reveal reveal-delay-1">Download Lokaal and start meeting the interesting people who are already around you.</p>
-                <div class="cta-actions reveal reveal-delay-2">
-                    <a href="https://apps.apple.com/app/lokaal" class="btn-primary" target="_blank">
-                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-                        Download on the App Store
-                    </a>
-                </div>
+    <!-- Footer -->
+    <footer>
+        <div class="footer-content">
+            <div class="footer-section">
+                <div class="footer-logo">Lokaal</div>
+                <p style="color: var(--gray); font-size: 0.9rem;">Turn near-misses into real friendships.</p>
             </div>
-        </section>
-
-        <!-- Footer -->
-        <footer class="site-footer">
-            <div class="footer-grid">
-                <div class="footer-brand">
-                    <div class="footer-logo">Lokaal</div>
-                    <p>Turn near-misses into real friendships. Built with privacy at its core.</p>
-                </div>
-                <div class="footer-col">
-                    <h4>Product</h4>
-                    <a href="#features">Features</a>
-                    <a href="#how-it-works">How It Works</a>
-                    <a href="#security">Security</a>
-                    <a href="#download">Download</a>
-                </div>
-                <div class="footer-col">
-                    <h4>Company</h4>
-                    <a href="#">About Us</a>
-                    <a href="#">Blog</a>
-                    <a href="#">Careers</a>
-                    <a href="#">Contact</a>
-                </div>
-                <div class="footer-col">
-                    <h4>Legal</h4>
-                    <a href="#">Privacy Policy</a>
-                    <a href="#">Terms of Service</a>
-                    <a href="#">Cookie Policy</a>
-                </div>
+            <div class="footer-section">
+                <h4>Product</h4>
+                <a href="#features">Features</a>
+                <a href="#how-it-works">How It Works</a>
+                <a href="#security">Security</a>
+                <a href="#download">Download</a>
             </div>
-            <div class="footer-bottom">
-                &copy; 2026 Lokaal. All rights reserved.
+            <div class="footer-section">
+                <h4>Company</h4>
+                <a href="#">About Us</a>
+                <a href="#">Blog</a>
+                <a href="#">Careers</a>
+                <a href="#">Contact</a>
             </div>
-        </footer>
-    </div>
-
-    <!-- Three.js -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <!-- GSAP + ScrollTrigger -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+            <div class="footer-section">
+                <h4>Legal</h4>
+                <a href="#">Privacy Policy</a>
+                <a href="#">Terms of Service</a>
+                <a href="#">Cookie Policy</a>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2026 Lokaal. All rights reserved.</p>
+        </div>
+    </footer>
 
     <script>
-    (function() {
-        'use strict';
+        // Intersection Observer for scroll animations
+        const observerOptions = {
+            root: null,
+            rootMargin: '0px',
+            threshold: 0.1
+        };
 
-        const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-        /* ═══════════════════════════════════════
-           THREE.JS — Hero 3D Scene
-           ═══════════════════════════════════════ */
-        const canvas = document.getElementById('webgl-canvas');
-        const renderer = new THREE.WebGLRenderer({
-            canvas,
-            antialias: true,
-            alpha: true,
-            powerPreference: 'high-performance'
-        });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        renderer.setClearColor(0x000000, 0);
-
-        const scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x050508, 0.035);
-
-        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-        camera.position.set(0, 0, 6);
-
-        const heroGroup = new THREE.Group();
-        scene.add(heroGroup);
-
-        const ambientLight = new THREE.AmbientLight(0x6366f1, 0.3);
-        scene.add(ambientLight);
-
-        const pointLight1 = new THREE.PointLight(0x6366f1, 2, 20);
-        pointLight1.position.set(3, 2, 4);
-        scene.add(pointLight1);
-
-        const pointLight2 = new THREE.PointLight(0x06d6a0, 1.5, 15);
-        pointLight2.position.set(-3, -1, 3);
-        scene.add(pointLight2);
-
-        const pointLight3 = new THREE.PointLight(0xe879f9, 1, 12);
-        pointLight3.position.set(0, 3, 2);
-        scene.add(pointLight3);
-
-        const icosaGeo = new THREE.IcosahedronGeometry(1.2, 1);
-        const icosaMat = new THREE.MeshPhysicalMaterial({
-            color: 0x6366f1,
-            metalness: 0.9,
-            roughness: 0.1,
-            transparent: true,
-            opacity: 0.85,
-            envMapIntensity: 1,
-            clearcoat: 1,
-            clearcoatRoughness: 0.1
-        });
-        const icosahedron = new THREE.Mesh(icosaGeo, icosaMat);
-        heroGroup.add(icosahedron);
-
-        const wireframeMat = new THREE.MeshBasicMaterial({
-            color: 0x818cf8,
-            wireframe: true,
-            transparent: true,
-            opacity: 0.15
-        });
-        const wireframeOuter = new THREE.Mesh(new THREE.IcosahedronGeometry(1.6, 1), wireframeMat);
-        heroGroup.add(wireframeOuter);
-
-        const torusGeo = new THREE.TorusGeometry(2.2, 0.02, 16, 100);
-        const torusMat = new THREE.MeshBasicMaterial({
-            color: 0x06d6a0,
-            transparent: true,
-            opacity: 0.3
-        });
-        const torus1 = new THREE.Mesh(torusGeo, torusMat);
-        torus1.rotation.x = Math.PI * 0.3;
-        heroGroup.add(torus1);
-
-        const torus2 = new THREE.Mesh(
-            new THREE.TorusGeometry(2.8, 0.015, 16, 100),
-            new THREE.MeshBasicMaterial({ color: 0xe879f9, transparent: true, opacity: 0.2 })
-        );
-        torus2.rotation.x = Math.PI * 0.6;
-        torus2.rotation.y = Math.PI * 0.3;
-        heroGroup.add(torus2);
-
-        const torus3 = new THREE.Mesh(
-            new THREE.TorusGeometry(3.4, 0.01, 16, 100),
-            new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.12 })
-        );
-        torus3.rotation.x = Math.PI * 0.15;
-        torus3.rotation.z = Math.PI * 0.4;
-        heroGroup.add(torus3);
-
-        const particlesCount = 600;
-        const particlesGeo = new THREE.BufferGeometry();
-        const posArray = new Float32Array(particlesCount * 3);
-        const velArray = new Float32Array(particlesCount * 3);
-        for (let i = 0; i < particlesCount; i++) {
-            const r = 2 + Math.random() * 8;
-            const theta = Math.random() * Math.PI * 2;
-            const phi = Math.acos(2 * Math.random() - 1);
-            posArray[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-            posArray[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
-            posArray[i * 3 + 2] = r * Math.cos(phi);
-            velArray[i * 3] = (Math.random() - 0.5) * 0.002;
-            velArray[i * 3 + 1] = (Math.random() - 0.5) * 0.002;
-            velArray[i * 3 + 2] = (Math.random() - 0.5) * 0.002;
-        }
-        particlesGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
-
-        const particlesMat = new THREE.PointsMaterial({
-            size: 0.02,
-            color: 0x818cf8,
-            transparent: true,
-            opacity: 0.6,
-            sizeAttenuation: true,
-            blending: THREE.AdditiveBlending
-        });
-        const particles = new THREE.Points(particlesGeo, particlesMat);
-        heroGroup.add(particles);
-
-        let mouseX = 0, mouseY = 0;
-        let targetMouseX = 0, targetMouseY = 0;
-        document.addEventListener('mousemove', (e) => {
-            targetMouseX = (e.clientX / window.innerWidth - 0.5) * 2;
-            targetMouseY = (e.clientY / window.innerHeight - 0.5) * 2;
-        });
-
-        let scrollY = 0;
-        window.addEventListener('scroll', () => { scrollY = window.pageYOffset; }, { passive: true });
-
-        function animateHero() {
-            mouseX += (targetMouseX - mouseX) * 0.05;
-            mouseY += (targetMouseY - mouseY) * 0.05;
-
-            const time = performance.now() * 0.001;
-
-            heroGroup.rotation.y = mouseX * 0.3 + time * 0.1;
-            heroGroup.rotation.x = mouseY * 0.15 + Math.sin(time * 0.3) * 0.05;
-
-            icosahedron.rotation.x = time * 0.15;
-            icosahedron.rotation.z = time * 0.1;
-
-            wireframeOuter.rotation.x = -time * 0.1;
-            wireframeOuter.rotation.y = time * 0.15;
-
-            torus1.rotation.z = time * 0.08;
-            torus2.rotation.z = -time * 0.06;
-            torus3.rotation.y = time * 0.04;
-
-            const positions = particles.geometry.attributes.position.array;
-            for (let i = 0; i < particlesCount; i++) {
-                positions[i * 3] += velArray[i * 3];
-                positions[i * 3 + 1] += velArray[i * 3 + 1];
-                positions[i * 3 + 2] += velArray[i * 3 + 2];
-                const dist = Math.sqrt(
-                    positions[i * 3] ** 2 +
-                    positions[i * 3 + 1] ** 2 +
-                    positions[i * 3 + 2] ** 2
-                );
-                if (dist > 10 || dist < 1.5) {
-                    velArray[i * 3] *= -1;
-                    velArray[i * 3 + 1] *= -1;
-                    velArray[i * 3 + 2] *= -1;
-                }
-            }
-            particles.geometry.attributes.position.needsUpdate = true;
-
-            const heroProgress = Math.min(scrollY / (window.innerHeight * 0.8), 1);
-            heroGroup.position.y = heroProgress * 2;
-            heroGroup.scale.setScalar(1 - heroProgress * 0.4);
-            icosaMat.opacity = 0.85 * (1 - heroProgress);
-            particlesMat.opacity = 0.6 * (1 - heroProgress);
-
-            camera.position.z = 6 - heroProgress * 2;
-            camera.position.y = heroProgress * 1;
-
-            renderer.render(scene, camera);
-        }
-
-        if (!prefersReducedMotion) {
-            function loop() {
-                animateHero();
-                requestAnimationFrame(loop);
-            }
-            loop();
-        } else {
-            renderer.render(scene, camera);
-        }
-
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-
-        /* ═══════════════════════════════════════
-           Product Canvas — 3D Visualization
-           ═══════════════════════════════════════ */
-        const productCanvas = document.getElementById('productCanvas');
-        if (productCanvas) {
-            const pRenderer = new THREE.WebGLRenderer({ canvas: productCanvas, antialias: true, alpha: true });
-            pRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-            pRenderer.setClearColor(0x000000, 0);
-
-            const pScene = new THREE.Scene();
-            const pCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 50);
-            pCamera.position.set(0, 0, 5);
-
-            const pAmbient = new THREE.AmbientLight(0xffffff, 0.3);
-            pScene.add(pAmbient);
-
-            const pDir = new THREE.DirectionalLight(0x6366f1, 1.5);
-            pDir.position.set(3, 3, 5);
-            pScene.add(pDir);
-
-            const pPoint = new THREE.PointLight(0x06d6a0, 1.5, 15);
-            pPoint.position.set(-2, -1, 3);
-            pScene.add(pPoint);
-
-            const pGroup = new THREE.Group();
-            pScene.add(pGroup);
-
-            const boxGeo = new THREE.BoxGeometry(1.2, 1.2, 1.2, 1, 1, 1);
-            const boxMat = new THREE.MeshPhysicalMaterial({
-                color: 0x6366f1,
-                metalness: 0.85,
-                roughness: 0.15,
-                transparent: true,
-                opacity: 0.9,
-                clearcoat: 0.8
-            });
-            const box = new THREE.Mesh(boxGeo, boxMat);
-            pGroup.add(box);
-
-            const sphereGeo = new THREE.SphereGeometry(0.6, 32, 32);
-            const sphereMat = new THREE.MeshPhysicalMaterial({
-                color: 0x06d6a0,
-                metalness: 0.9,
-                roughness: 0.1,
-                transparent: true,
-                opacity: 0.85,
-                clearcoat: 1
-            });
-            const sphere = new THREE.Mesh(sphereGeo, sphereMat);
-            sphere.position.set(2, 0.5, -0.5);
-            pGroup.add(sphere);
-
-            const coneGeo = new THREE.ConeGeometry(0.5, 1.2, 32);
-            const coneMat = new THREE.MeshPhysicalMaterial({
-                color: 0xe879f9,
-                metalness: 0.85,
-                roughness: 0.15,
-                transparent: true,
-                opacity: 0.85,
-                clearcoat: 0.8
-            });
-            const cone = new THREE.Mesh(coneGeo, coneMat);
-            cone.position.set(-2, -0.3, 0.3);
-            pGroup.add(cone);
-
-            const octGeo = new THREE.OctahedronGeometry(0.5, 0);
-            const octMat = new THREE.MeshPhysicalMaterial({
-                color: 0x22d3ee,
-                metalness: 0.9,
-                roughness: 0.1,
-                transparent: true,
-                opacity: 0.85,
-                clearcoat: 1
-            });
-            const octahedron = new THREE.Mesh(octGeo, octMat);
-            octahedron.position.set(0, 2, -1);
-            pGroup.add(octahedron);
-
-            const pParticlesCount = 200;
-            const pParticlesGeo = new THREE.BufferGeometry();
-            const pPositions = new Float32Array(pParticlesCount * 3);
-            for (let i = 0; i < pParticlesCount; i++) {
-                pPositions[i * 3] = (Math.random() - 0.5) * 10;
-                pPositions[i * 3 + 1] = (Math.random() - 0.5) * 10;
-                pPositions[i * 3 + 2] = (Math.random() - 0.5) * 6;
-            }
-            pParticlesGeo.setAttribute('position', new THREE.BufferAttribute(pPositions, 3));
-            const pParticlesMat = new THREE.PointsMaterial({
-                size: 0.015,
-                color: 0x818cf8,
-                transparent: true,
-                opacity: 0.4,
-                sizeAttenuation: true,
-                blending: THREE.AdditiveBlending
-            });
-            pScene.add(new THREE.Points(pParticlesGeo, pParticlesMat));
-
-            function resizeProductCanvas() {
-                const rect = productCanvas.parentElement.getBoundingClientRect();
-                pRenderer.setSize(rect.width, rect.height);
-                pCamera.aspect = rect.width / rect.height;
-                pCamera.updateProjectionMatrix();
-            }
-            resizeProductCanvas();
-
-            function animateProduct() {
-                const t = performance.now() * 0.001;
-                pGroup.rotation.y = t * 0.2;
-                box.rotation.x = t * 0.3;
-                box.rotation.z = t * 0.15;
-                sphere.position.y = 0.5 + Math.sin(t * 0.8) * 0.3;
-                cone.rotation.y = t * 0.4;
-                octahedron.rotation.x = t * 0.5;
-                octahedron.rotation.z = t * 0.3;
-                pRenderer.render(pScene, pCamera);
-            }
-
-            if (!prefersReducedMotion) {
-                function productLoop() {
-                    animateProduct();
-                    requestAnimationFrame(productLoop);
-                }
-                const productObserver = new IntersectionObserver((entries) => {
-                    entries.forEach(entry => {
-                        if (entry.isIntersecting) {
-                            productLoop();
-                            productObserver.disconnect();
-                        }
-                    });
-                }, { threshold: 0.1 });
-                productObserver.observe(productCanvas);
-            } else {
-                pRenderer.render(pScene, pCamera);
-            }
-
-            window.addEventListener('resize', resizeProductCanvas);
-        }
-
-        /* ═══════════════════════════════════════
-           GSAP — Scroll Animations
-           ═══════════════════════════════════════ */
-        if (!prefersReducedMotion) {
-            gsap.registerPlugin(ScrollTrigger);
-
-            gsap.to('.hero-bg-gradient', {
-                scrollTrigger: {
-                    trigger: '.hero',
-                    start: 'top top',
-                    end: 'bottom top',
-                    scrub: 1
-                },
-                y: 200,
-                opacity: 0,
-                ease: 'none'
-            });
-
-            gsap.from('.feature-card', {
-                scrollTrigger: {
-                    trigger: '.features-grid',
-                    start: 'top 80%',
-                    end: 'top 30%',
-                    scrub: 0.5
-                },
-                y: 80,
-                rotateX: 8,
-                opacity: 0,
-                stagger: 0.1,
-                ease: 'power2.out'
-            });
-
-            gsap.from('.testimonial-card', {
-                scrollTrigger: {
-                    trigger: '.testimonials-grid',
-                    start: 'top 80%',
-                    end: 'top 30%',
-                    scrub: 0.5
-                },
-                y: 100,
-                opacity: 0,
-                scale: 0.95,
-                stagger: 0.15,
-                ease: 'power2.out'
-            });
-
-            gsap.from('.security-orb', {
-                scrollTrigger: {
-                    trigger: '.security',
-                    start: 'top 70%',
-                    end: 'top 40%',
-                    scrub: 1
-                },
-                scale: 0.5,
-                opacity: 0,
-                rotation: 180,
-                ease: 'power2.out'
-            });
-
-            gsap.from('.cta-ring', {
-                scrollTrigger: {
-                    trigger: '.cta-section',
-                    start: 'top 80%',
-                    end: 'center center',
-                    scrub: 1
-                },
-                scale: 0.3,
-                opacity: 0,
-                stagger: 0.2,
-                ease: 'power2.out'
-            });
-
-            document.querySelectorAll('.step-item').forEach((item, i) => {
-                ScrollTrigger.create({
-                    trigger: item,
-                    start: 'top 70%',
-                    onEnter: () => {
-                        document.querySelectorAll('.step-item').forEach(s => s.classList.remove('active'));
-                        item.classList.add('active');
-                    }
-                });
-            });
-        }
-
-        /* ═══════════════════════════════════════
-           Scroll Reveal (IntersectionObserver)
-           ═══════════════════════════════════════ */
-        const revealObserver = new IntersectionObserver((entries) => {
+        const observer = new IntersectionObserver((entries) => {
             entries.forEach(entry => {
                 if (entry.isIntersecting) {
                     entry.target.classList.add('visible');
                 }
             });
-        }, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
+        }, observerOptions);
 
-        document.querySelectorAll('.reveal').forEach(el => revealObserver.observe(el));
+        document.querySelectorAll('.animate-on-scroll').forEach(el => {
+            observer.observe(el);
+        });
 
-        /* ═══════════════════════════════════════
-           Counter Animation
-           ═══════════════════════════════════════ */
-        const counterObserver = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    const el = entry.target;
-                    const target = parseInt(el.dataset.count);
-                    const suffix = el.dataset.suffix || '';
-                    const duration = 2000;
-                    const start = performance.now();
-
-                    function update(now) {
-                        const elapsed = now - start;
-                        const progress = Math.min(elapsed / duration, 1);
-                        const eased = 1 - Math.pow(1 - progress, 3);
-                        el.textContent = Math.round(eased * target) + suffix;
-                        if (progress < 1) requestAnimationFrame(update);
-                    }
-                    requestAnimationFrame(update);
-                    counterObserver.unobserve(el);
-                }
-            });
-        }, { threshold: 0.5 });
-
-        document.querySelectorAll('[data-count]').forEach(el => counterObserver.observe(el));
-
-        /* ═══════════════════════════════════════
-           Cursor Glow
-           ═══════════════════════════════════════ */
-        if (!prefersReducedMotion) {
-            const glow = document.getElementById('cursorGlow');
-            let glowX = 0, glowY = 0, curX = 0, curY = 0;
-
-            document.addEventListener('mousemove', (e) => {
-                curX = e.clientX;
-                curY = e.clientY;
-            });
-
-            function updateGlow() {
-                glowX += (curX - glowX) * 0.08;
-                glowY += (curY - glowY) * 0.08;
-                glow.style.left = glowX + 'px';
-                glow.style.top = glowY + 'px';
-                requestAnimationFrame(updateGlow);
-            }
-            updateGlow();
-        }
-
-        /* ═══════════════════════════════════════
-           Card Tilt Effect
-           ═══════════════════════════════════════ */
-        if (!prefersReducedMotion) {
-            document.querySelectorAll('.feature-card, .testimonial-card').forEach(card => {
-                card.addEventListener('mousemove', (e) => {
-                    const rect = card.getBoundingClientRect();
-                    const x = (e.clientX - rect.left) / rect.width;
-                    const y = (e.clientY - rect.top) / rect.height;
-                    const tiltX = (y - 0.5) * -8;
-                    const tiltY = (x - 0.5) * 8;
-                    card.style.transform = `perspective(800px) rotateX(${tiltX}deg) rotateY(${tiltY}deg) translateY(-8px)`;
-                    card.style.setProperty('--mouse-x', (x * 100) + '%');
-                    card.style.setProperty('--mouse-y', (y * 100) + '%');
-                });
-
-                card.addEventListener('mouseleave', () => {
-                    card.style.transform = '';
-                });
-            });
-        }
-
-        /* ═══════════════════════════════════════
-           Navigation Scroll
-           ═══════════════════════════════════════ */
-        const nav = document.getElementById('mainNav');
-        window.addEventListener('scroll', () => {
-            nav.classList.toggle('scrolled', window.scrollY > 50);
-        }, { passive: true });
-
+        // Smooth scroll for navigation links
         document.querySelectorAll('a[href^="#"]').forEach(anchor => {
             anchor.addEventListener('click', function(e) {
                 e.preventDefault();
                 const target = document.querySelector(this.getAttribute('href'));
                 if (target) {
-                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
                 }
             });
         });
 
-    })();
+        // Navbar background on scroll
+        window.addEventListener('scroll', () => {
+            const nav = document.querySelector('nav');
+            if (window.scrollY > 50) {
+                nav.style.background = 'rgba(2, 6, 23, 0.95)';
+                nav.style.borderBottomColor = 'rgba(255, 255, 255, 0.1)';
+            } else {
+                nav.style.background = 'rgba(2, 6, 23, 0.8)';
+                nav.style.borderBottomColor = 'rgba(255, 255, 255, 0.05)';
+            }
+        });
+
+        // Parallax effect for hero section
+        window.addEventListener('scroll', () => {
+            const scrolled = window.pageYOffset;
+            const hero = document.querySelector('.hero-content');
+            if (hero && scrolled < window.innerHeight) {
+                hero.style.transform = `translateY(${scrolled * 0.3}px)`;
+                hero.style.opacity = 1 - (scrolled / window.innerHeight);
+            }
+        });
+
+        // Add ripple effect to buttons
+        document.querySelectorAll('.cta-button, .app-store-button').forEach(button => {
+            button.addEventListener('click', function(e) {
+                const rect = this.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+
+                const ripple = document.createElement('span');
+                ripple.style.cssText = `
+                    position: absolute;
+                    background: rgba(255, 255, 255, 0.3);
+                    border-radius: 50%;
+                    pointer-events: none;
+                    width: 100px;
+                    height: 100px;
+                    left: ${x - 50}px;
+                    top: ${y - 50}px;
+                    animation: ripple 0.6s ease-out;
+                `;
+                this.style.position = 'relative';
+                this.style.overflow = 'hidden';
+                this.appendChild(ripple);
+
+                setTimeout(() => ripple.remove(), 600);
+            });
+        });
+
+        // Typing effect for hero badge
+        const badge = document.querySelector('.hero-badge');
+        if (badge) {
+            const text = badge.textContent;
+            badge.textContent = '';
+            let i = 0;
+            const typeWriter = () => {
+                if (i < text.length) {
+                    badge.textContent += text.charAt(i);
+                    i++;
+                    setTimeout(typeWriter, 50);
+                }
+            };
+            setTimeout(typeWriter, 1000);
+        }
     </script>
 </body>
 </html>
