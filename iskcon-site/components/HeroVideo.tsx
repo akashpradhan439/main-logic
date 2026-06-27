@@ -73,7 +73,7 @@ export default function HeroVideo() {
           playsInline
           preload="auto"
           aria-hidden="true"
-          src="/videos/hero.mp4"
+          src="/iskcon-site/videos/hero.mp4"
           className="h-full w-full object-cover"
           style={{ filter: "brightness(0.55) saturate(0.9)" }}
         />
