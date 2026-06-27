@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion, useReducedMotion } from "framer-motion";
 
@@ -7,17 +8,23 @@ const HEADLINE_WORDS = ["Rejuvenate", "yourself", "spiritually"] as const;
 
 const FEATHER_MASK_STYLE = {
   maskImage:
-    "radial-gradient(ellipse 80% 70% at center, black 40%, transparent 80%), " +
-    "linear-gradient(to bottom, black 0%, black 40%, transparent 75%)",
+    "radial-gradient(ellipse 80% 60% at center, black 30%, transparent 75%), " +
+    "linear-gradient(to bottom, black 0%, black 50%, transparent 100%)",
   WebkitMaskImage:
-    "radial-gradient(ellipse 80% 70% at center, black 40%, transparent 80%), " +
-    "linear-gradient(to bottom, black 0%, black 40%, transparent 75%)",
+    "radial-gradient(ellipse 80% 60% at center, black 30%, transparent 75%), " +
+    "linear-gradient(to bottom, black 0%, black 50%, transparent 100%)",
   maskComposite: "intersect",
   WebkitMaskComposite: "source-in",
 } as const;
 
 export default function HeroVideo() {
   const reduceMotion = useReducedMotion();
+  const [videoReady, setVideoReady] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setVideoReady(true), 100);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Per-word stagger reveal for the headline. Reduced-motion collapses to a
   // simple fade so nothing drifts or bounces on the screen.
@@ -60,14 +67,11 @@ export default function HeroVideo() {
         }}
       />
 
-      {/* Layer 2 — single background video with feathered mask + dim + fade-in */}
-      <motion.div
+      {/* Layer 2 — single background video with feathered mask + dim */}
+      <div
         aria-hidden="true"
-        className="absolute inset-x-0 top-0 z-0 h-[65vh]"
+        className="absolute inset-x-0 bottom-0 z-0 h-[75%]"
         style={FEATHER_MASK_STYLE}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 1.2, ease: "easeOut" }}
       >
         <video
           autoPlay
@@ -78,14 +82,18 @@ export default function HeroVideo() {
           aria-hidden="true"
           src="/iskcon-site/videos/hero.mp4"
           className="h-full w-full object-cover"
-          style={{ filter: "brightness(0.55) saturate(0.9)" }}
+          style={{
+            filter: "brightness(0.55) saturate(0.9)",
+            opacity: videoReady ? 1 : 0,
+            transition: "opacity 1.2s ease-in-out",
+          }}
         />
-      </motion.div>
+      </div>
 
       {/* Layer 3 — dim overlay + bottom fade for headline contrast */}
       <div
         aria-hidden="true"
-        className="absolute inset-0 z-10 bg-black/35 bg-gradient-to-b from-transparent via-transparent to-black/40"
+        className="absolute inset-0 z-10 bg-gradient-to-b from-transparent via-transparent to-sage-50"
       />
 
       {/* Layer 4 — headline + CTAs */}
