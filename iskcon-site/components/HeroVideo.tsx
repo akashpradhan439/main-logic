@@ -8,10 +8,10 @@ const HEADLINE_WORDS = ["Rejuvenate", "yourself", "spiritually"] as const;
 const FEATHER_MASK_STYLE = {
   maskImage:
     "radial-gradient(ellipse 80% 70% at center, black 40%, transparent 80%), " +
-    "linear-gradient(to bottom, black 0%, black 55%, transparent 100%)",
+    "linear-gradient(to bottom, black 0%, black 40%, transparent 75%)",
   WebkitMaskImage:
     "radial-gradient(ellipse 80% 70% at center, black 40%, transparent 80%), " +
-    "linear-gradient(to bottom, black 0%, black 55%, transparent 100%)",
+    "linear-gradient(to bottom, black 0%, black 40%, transparent 75%)",
   maskComposite: "intersect",
   WebkitMaskComposite: "source-in",
 } as const;
@@ -60,11 +60,14 @@ export default function HeroVideo() {
         }}
       />
 
-      {/* Layer 2 — single background video with feathered mask + dim */}
-      <div
+      {/* Layer 2 — single background video with feathered mask + dim + fade-in */}
+      <motion.div
         aria-hidden="true"
-        className="absolute inset-0 z-0"
+        className="absolute inset-x-0 top-0 z-0 h-[65vh]"
         style={FEATHER_MASK_STYLE}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 1.2, ease: "easeOut" }}
       >
         <video
           autoPlay
@@ -77,7 +80,7 @@ export default function HeroVideo() {
           className="h-full w-full object-cover"
           style={{ filter: "brightness(0.55) saturate(0.9)" }}
         />
-      </div>
+      </motion.div>
 
       {/* Layer 3 — dim overlay + bottom fade for headline contrast */}
       <div
@@ -91,7 +94,7 @@ export default function HeroVideo() {
           {...fadeUp(0)}
           className="text-xs uppercase tracking-[0.4em] text-ivory-50/90 sm:text-sm"
         >
-          ISKCON &middot; Secunderabad
+          ISKCON &middot; Gurugram Sector 57
         </motion.span>
 
         <h1 className="mt-6 font-serif text-4xl font-medium leading-[1.05] tracking-tight text-ivory-50 sm:text-6xl md:text-7xl lg:text-8xl">

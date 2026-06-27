@@ -18,13 +18,13 @@ export default function Footer() {
         {/* Brand column */}
         <div>
           <h2 className="font-serif text-2xl font-semibold text-sage-700">
-            ISKCON Secunderabad
+ISKCON Gurugram Sector 57
           </h2>
           <p className="mt-1 text-xs uppercase tracking-[0.2em] text-sage-600">
             Sri Radha Gopinath Temple
           </p>
           <p className="mt-4 text-sm leading-6 text-slate-600">
-            A spiritual home for the Hare Krishna movement in Secunderabad —
+            A spiritual home for the Hare Krishna movement in Gurugram Sector 57 —
             daily kirtans, festivals, Gita classes, Annadanam, and cow
             protection.
           </p>
@@ -58,7 +58,7 @@ export default function Footer() {
             <p>
               ISKCON Sri Radha Gopinath Temple
               <br />
-              Secunderabad, Telangana 500003
+              Gurugram Sector 57, Haryana 122003
               <br />
               India
             </p>
@@ -92,7 +92,7 @@ export default function Footer() {
                 href="https://wa.me/919880685335"
                 target="_blank"
                 rel="noopener noreferrer"
-                aria-label="Chat with ISKCON Secunderabad on WhatsApp"
+                aria-label="Chat with ISKCON Gurugram Sector 57 on WhatsApp"
                 className="text-slate-700 transition-colors hover:text-sage-700"
               >
                 WhatsApp
@@ -103,7 +103,7 @@ export default function Footer() {
                 href="https://www.facebook.com/iskconsecunderabad"
                 target="_blank"
                 rel="noopener noreferrer"
-                aria-label="ISKCON Secunderabad on Facebook"
+                aria-label="ISKCON Gurugram Sector 57 on Facebook"
                 className="text-slate-700 transition-colors hover:text-sage-700"
               >
                 Facebook
@@ -114,7 +114,7 @@ export default function Footer() {
                 href="https://www.instagram.com/iskconsecunderabad"
                 target="_blank"
                 rel="noopener noreferrer"
-                aria-label="ISKCON Secunderabad on Instagram"
+                aria-label="ISKCON Gurugram Sector 57 on Instagram"
                 className="text-slate-700 transition-colors hover:text-sage-700"
               >
                 Instagram
@@ -125,7 +125,7 @@ export default function Footer() {
                 href="https://www.youtube.com/@iskconsecunderabad"
                 target="_blank"
                 rel="noopener noreferrer"
-                aria-label="ISKCON Secunderabad on YouTube"
+                aria-label="ISKCON Gurugram Sector 57 on YouTube"
                 className="text-slate-700 transition-colors hover:text-sage-700"
               >
                 YouTube
@@ -137,7 +137,7 @@ export default function Footer() {
 
       <div className="border-t border-sage-100">
         <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-2 px-4 py-4 text-xs text-slate-600 sm:flex-row sm:px-6 lg:px-8">
-          <p>© {year} ISKCON Secunderabad. All rights reserved.</p>
+          <p>© {year} ISKCON Gurugram Sector 57. All rights reserved.</p>
           <p>Built with devotion.</p>
         </div>
       </div>

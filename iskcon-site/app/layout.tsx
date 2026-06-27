@@ -18,11 +18,11 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "ISKCON Secunderabad",
+  title: "ISKCON Gurugram Sector 57",
   description:
-    "ISKCON Sri Radha Gopinath Temple, Secunderabad — Hare Krishna movement, Annadan, Goshala, Gita classes, and spiritual community.",
+    "ISKCON Sri Radha Gopinath Temple, Gurugram Sector 57 — Hare Krishna movement, Annadan, Goshala, Gita classes, and spiritual community.",
   openGraph: {
-    title: "ISKCON Secunderabad",
+title: "ISKCON Gurugram Sector 57",
     type: "website",
   },
 };

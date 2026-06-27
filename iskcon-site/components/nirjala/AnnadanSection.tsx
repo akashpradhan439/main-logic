@@ -95,7 +95,7 @@ export default function AnnadanSection() {
           </h2>
           <p className="mx-auto mt-3 max-w-2xl text-base text-slate-600">
             Sponsor a meal offering and feed the hungry. Each contribution
-            directly funds ISKCON Secunderabad&apos;s Annadan program.
+            directly funds ISKCON Gurugram Sector 57&apos;s Annadan program.
           </p>
         </Reveal>
 

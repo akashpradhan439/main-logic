@@ -1,9 +1,9 @@
 import ComingSoon from "@/components/ComingSoon";
 
 export const metadata = {
-  title: "Annadanam — ISKCON Secunderabad",
+  title: "Annadanam — ISKCON Gurugram Sector 57",
   description:
-    "Annadanam at ISKCON Secunderabad — coming soon.",
+    "Annadanam at ISKCON Gurugram Sector 57 — coming soon.",
 };
 
 export default function AnnadanamPage() {

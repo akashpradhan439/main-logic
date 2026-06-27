@@ -26,13 +26,13 @@ export default function Header() {
         <Link
           href="/"
           className="flex flex-col leading-tight"
-          aria-label="ISKCON Secunderabad — Home"
+          aria-label="ISKCON Gurugram Sector 57 — Home"
         >
           <span className="font-serif text-2xl font-semibold text-sage-700">
             ISKCON
           </span>
           <span className="text-[10px] uppercase tracking-[0.2em] text-sage-600">
-            Secunderabad
+            Gurugram Sector 57
           </span>
         </Link>
 
@@ -67,7 +67,7 @@ export default function Header() {
           whileTap={reduceMotion ? undefined : { scale: 0.97 }}
           style={{ perspective: "600px", transformStyle: "preserve-3d" }}
           className="hidden md:inline-flex"
-          aria-label="Donate to ISKCON Secunderabad"
+          aria-label="Donate to ISKCON Gurugram Sector 57"
         >
           <Link
             href="/donate"

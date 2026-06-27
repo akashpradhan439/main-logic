@@ -1,9 +1,9 @@
 import ComingSoon from "@/components/ComingSoon";
 
 export const metadata = {
-  title: "Personal — ISKCON Secunderabad",
+  title: "Personal — ISKCON Gurugram Sector 57",
   description:
-    "Personal Development at ISKCON Secunderabad — coming soon.",
+    "Personal Development at ISKCON Gurugram Sector 57 — coming soon.",
 };
 
 export default function PersonalPage() {

@@ -148,7 +148,7 @@ export default function BooksFeature() {
                 and the soul.
               </p>
               <p>
-                Published by ISKCON Secunderabad, this concise volume answers
+                Published by ISKCON Gurugram Sector 57, this concise volume answers
                 the questions our community asks most often: which oils to use,
                 how to identify pure ghee, and why Krishna prasadam nourishes in
                 ways that ordinary food cannot. Order a copy for your family,

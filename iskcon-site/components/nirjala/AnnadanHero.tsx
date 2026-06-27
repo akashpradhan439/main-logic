@@ -76,7 +76,7 @@ export default function AnnadanHero() {
           {...fadeUp(0)}
           className="text-xs font-semibold uppercase tracking-[0.3em] text-sage-600 sm:text-sm"
         >
-          ISKCON &middot; Secunderabad
+          ISKCON &middot; Gurugram Sector 57
         </motion.span>
 
         {/* Main heading — staggered per word */}

@@ -46,7 +46,7 @@ export default function CovidStrip() {
         </div>
 
         <p className="mx-auto mt-4 max-w-2xl text-base text-slate-600">
-          ISKCON Secunderabad continues to serve the community with safety and
+          ISKCON Gurugram Sector 57 continues to serve the community with safety and
           devotion. The temple is open with care protocols, and prasadam
           distribution continues for those in need.
         </p>

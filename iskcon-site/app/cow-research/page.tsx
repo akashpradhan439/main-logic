@@ -1,9 +1,9 @@
 import ComingSoon from "@/components/ComingSoon";
 
 export const metadata = {
-  title: "Cow Research — ISKCON Secunderabad",
+  title: "Cow Research — ISKCON Gurugram Sector 57",
   description:
-    "Cow Research & Goshala at ISKCON Secunderabad — coming soon.",
+    "Cow Research & Goshala at ISKCON Gurugram Sector 57 — coming soon.",
 };
 
 export default function CowResearchPage() {

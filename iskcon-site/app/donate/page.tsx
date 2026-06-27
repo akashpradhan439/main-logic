@@ -1,9 +1,9 @@
 import ComingSoon from "@/components/ComingSoon";
 
 export const metadata = {
-  title: "Donate — ISKCON Secunderabad",
+  title: "Donate — ISKCON Gurugram Sector 57",
   description:
-    "Donate to ISKCON Secunderabad — full donation portal coming soon.",
+    "Donate to ISKCON Gurugram Sector 57 — full donation portal coming soon.",
 };
 
 export default function DonatePage() {
