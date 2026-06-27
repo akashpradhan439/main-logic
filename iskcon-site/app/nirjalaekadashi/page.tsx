@@ -1,0 +1,23 @@
+import AnnadanHero from "@/components/nirjala/AnnadanHero";
+import AnnadanSection from "@/components/nirjala/AnnadanSection";
+import GausevaSection from "@/components/nirjala/GausevaSection";
+import ModiVideo from "@/components/nirjala/ModiVideo";
+import BankDetails from "@/components/nirjala/BankDetails";
+
+export const metadata = {
+  title: "Nirjala Ekadashi · Annadan & Gauseva · ISKCON Secunderabad",
+  description:
+    "Donate to feed the hungry and protect cows through ISKCON Secunderabad's Nirjala Ekadashi campaign",
+};
+
+export default function NirjalaEkadashiPage() {
+  return (
+    <>
+      <AnnadanHero />
+      <AnnadanSection />
+      <GausevaSection />
+      <ModiVideo />
+      <BankDetails />
+    </>
+  );
+}

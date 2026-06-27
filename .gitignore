@@ -38,3 +38,6 @@ docs/messaging-api.md
 # demo session signing secret (local)
 demo/public/.session_secret
 demo/.session_secret
+.mimocode/plans/1782404819092-silent-tiger.md
+docs/fine-tuning-plan.md
+iskcon-site/AGENTS.md
