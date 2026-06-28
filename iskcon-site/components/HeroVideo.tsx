@@ -1,30 +1,38 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion, useReducedMotion } from "framer-motion";
 
 const HEADLINE_WORDS = ["Rejuvenate", "yourself", "spiritually"] as const;
 
+// Feathered mask: a wide, soft vignette plus a tight bottom fade so the
+// video dissolves into the ivory background instead of ending in a hard edge.
+// Bottom fade is restricted to the lower ~30% of the video so headline content
+// stays readable and the fade doesn't bury meaningful video content.
 const FEATHER_MASK_STYLE = {
   maskImage:
-    "radial-gradient(ellipse 80% 60% at center, black 30%, transparent 75%), " +
-    "linear-gradient(to bottom, black 0%, black 50%, transparent 100%)",
+    "radial-gradient(ellipse 95% 95% at center, black 55%, transparent 95%), " +
+    "linear-gradient(to bottom, black 0%, black 70%, transparent 100%)",
   WebkitMaskImage:
-    "radial-gradient(ellipse 80% 60% at center, black 30%, transparent 75%), " +
-    "linear-gradient(to bottom, black 0%, black 50%, transparent 100%)",
+    "radial-gradient(ellipse 95% 95% at center, black 55%, transparent 95%), " +
+    "linear-gradient(to bottom, black 0%, black 70%, transparent 100%)",
   maskComposite: "intersect",
   WebkitMaskComposite: "source-in",
 } as const;
 
 export default function HeroVideo() {
   const reduceMotion = useReducedMotion();
-  const [videoReady, setVideoReady] = useState(false);
 
-  useEffect(() => {
-    const timer = setTimeout(() => setVideoReady(true), 100);
-    return () => clearTimeout(timer);
-  }, []);
+  // Fade the background video in from 0 → 1 on mount so it doesn't pop in
+  // abruptly when the page loads. Reduced-motion collapses to a quick fade.
+  const videoReveal = {
+    initial: { opacity: 0 },
+    animate: { opacity: 1 },
+    transition: {
+      duration: reduceMotion ? 0.2 : 1.2,
+      ease: "easeOut" as const,
+    },
+  };
 
   // Per-word stagger reveal for the headline. Reduced-motion collapses to a
   // simple fade so nothing drifts or bounces on the screen.
@@ -67,10 +75,13 @@ export default function HeroVideo() {
         }}
       />
 
-      {/* Layer 2 — single background video with feathered mask + dim */}
-      <div
+      {/* Layer 2 — single background video, vertically inset so it sits
+          inside the hero (hero height is preserved) with feathered mask + dim
+          and an opacity fade-in on mount. */}
+      <motion.div
         aria-hidden="true"
-        className="absolute inset-x-0 bottom-0 z-0 h-[75%]"
+        {...videoReveal}
+        className="absolute inset-x-0 top-[12%] bottom-[12%] z-0"
         style={FEATHER_MASK_STYLE}
       >
         <video
@@ -82,18 +93,14 @@ export default function HeroVideo() {
           aria-hidden="true"
           src="/iskcon-site/videos/hero.mp4"
           className="h-full w-full object-cover"
-          style={{
-            filter: "brightness(0.55) saturate(0.9)",
-            opacity: videoReady ? 1 : 0,
-            transition: "opacity 1.2s ease-in-out",
-          }}
+          style={{ filter: "brightness(0.55) saturate(0.9)" }}
         />
-      </div>
+      </motion.div>
 
       {/* Layer 3 — dim overlay + bottom fade for headline contrast */}
       <div
         aria-hidden="true"
-        className="absolute inset-0 z-10 bg-gradient-to-b from-transparent via-transparent to-sage-50"
+        className="absolute inset-0 z-10 bg-black/35 bg-gradient-to-b from-transparent via-transparent to-black/40"
       />
 
       {/* Layer 4 — headline + CTAs */}
