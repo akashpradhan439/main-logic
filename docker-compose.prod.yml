@@ -128,11 +128,11 @@ services:
       - DEMO_PORT=4505
     command: ["node", "dist/demo/server.js"]
 
-  iskcon-site:
-    build: ./iskcon-site
-    image: iskcon-site:latest
-    container_name: iskcon-site
-    restart: always
+  # iskcon-site:
+  #   build: ./iskcon-site
+  #   image: iskcon-site:latest
+  #   container_name: iskcon-site
+  #   restart: always
 
   nginx:
     image: nginx:alpine
@@ -145,7 +145,7 @@ services:
     depends_on:
       - api
       - demo
-      - iskcon-site
+      # - iskcon-site
 
 volumes:
   rabbitmq_data:
