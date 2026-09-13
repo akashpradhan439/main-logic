@@ -32,4 +32,7 @@ export const config = {
   n8nWebhookSecret: process.env.N8N_WEBHOOK_SECRET || "",
   skipRabbitMQ: process.env.SKIP_RABBITMQ === "true",
   skipRedis: process.env.SKIP_REDIS === "true",
+  passwordPepper: process.env.PASSWORD_PEPPER || "default_pepper_if_not_set",
+  twilioAccountSid: process.env.TWILIO_ACCOUNT_SID || "",
+  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || "",
 };
