@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { randomUUID } from "crypto";
-import { supabase } from "../lib/supabase.js";
+import pg from "pg";
+import { pool } from "../lib/db.js";
 import {
   connectionRequestsTotal,
   connectionAcceptsTotal,
@@ -41,7 +42,7 @@ const ScanQRTokenSchema = z.object({
 const GenerateQRTokenSchema = z.object({}).strict();
 
 export type ConnectionsRouteDeps = {
-  supabase: typeof supabase;
+  pool: pg.Pool;
   verifyAccessToken: typeof verifyAccessToken;
   AuthError: typeof AuthError;
   encryptPayload: typeof encryptPayload;
@@ -57,7 +58,7 @@ export function createConnectionsRoutes(
   overrides: Partial<ConnectionsRouteDeps> = {}
 ) {
   const deps: ConnectionsRouteDeps = {
-    supabase,
+    pool,
     verifyAccessToken,
     AuthError,
     encryptPayload,
@@ -72,7 +73,7 @@ export function createConnectionsRoutes(
 
   return async function connectionsRoutes(app: FastifyInstance) {
     const {
-      supabase,
+      pool,
       verifyAccessToken,
       AuthError,
       encryptPayload,
@@ -324,11 +325,11 @@ export function createConnectionsRoutes(
 
         // Verify target user exists
         const targetFetchStart = process.hrtime.bigint();
-        const { data: targetUser, error: targetError } = await supabase
-          .from("users")
-          .select("id")
-          .eq("id", targetUserId)
-          .single();
+        const { rows: targetRows } = await pool.query(
+          "SELECT id FROM users WHERE id = $1",
+          [targetUserId]
+        );
+        const targetUser = targetRows[0] ?? null;
         const targetFetchDurationMs =
           Number(process.hrtime.bigint() - targetFetchStart) / 1_000_000;
 
@@ -346,20 +347,13 @@ export function createConnectionsRoutes(
           );
         }
 
-        if (targetError || !targetUser) {
+        if (!targetUser) {
           log.error(
             {
               event: "qr_scan_target_not_found",
               userId,
               targetUserId,
               requestId,
-              dbError: targetError
-                ? {
-                    message: targetError.message,
-                    details: targetError.details,
-                    code: targetError.code,
-                  }
-                : null,
             },
             "Target user from QR not found"
           );
@@ -374,7 +368,7 @@ export function createConnectionsRoutes(
 
         // Check for existing connection
         const { row: existing, error: findError } =
-          await findConnectionBetweenUsers(supabase, userId, targetUserId);
+          await findConnectionBetweenUsers(pool, userId, targetUserId);
 
         if (findError) {
           log.error(
@@ -435,15 +429,12 @@ export function createConnectionsRoutes(
 
           if (existing.status === "pending") {
             // Accept existing pending request from either side
-            const { error: acceptError } = await supabase
-              .from("connections")
-              .update({
-                status: "accepted",
-                updated_at: new Date().toISOString(),
-              })
-              .eq("id", existing.id);
+            const { rowCount } = await pool.query(
+              "UPDATE connections SET status = $1, updated_at = $2 WHERE id = $3",
+              ["accepted", new Date().toISOString(), existing.id]
+            );
 
-            if (acceptError) {
+            if (!rowCount) {
               log.error(
                 {
                   event: "qr_scan_accept_failed",
@@ -503,19 +494,15 @@ export function createConnectionsRoutes(
               });
             }
 
-            const { error: updateError } = await supabase
-              .from("connections")
-              .update({
-                requester_id: userId,
-                addressee_id: targetUserId,
-                status: "accepted",
-                requester_blocked: false,
-                addressee_blocked: false,
-                updated_at: new Date().toISOString(),
-              })
-              .eq("id", existing.id);
+            const { rowCount } = await pool.query(
+              `UPDATE connections
+               SET requester_id = $1, addressee_id = $2, status = $3,
+                   requester_blocked = false, addressee_blocked = false, updated_at = $4
+               WHERE id = $5`,
+              [userId, targetUserId, "accepted", new Date().toISOString(), existing.id]
+            );
 
-            if (updateError) {
+            if (!rowCount) {
               log.error(
                 {
                   event: "qr_scan_request_failed",
@@ -558,16 +545,13 @@ export function createConnectionsRoutes(
         }
 
         // Create new connection request
-        const { error: insertError } = await supabase
-          .from("connections")
-          .insert({
-            requester_id: requesterId,
-            addressee_id: addresseeId,
-            status: "accepted",
-            created_at: new Date().toISOString(),
-          });
+        const { rowCount } = await pool.query(
+          `INSERT INTO connections (requester_id, addressee_id, status, created_at)
+           VALUES ($1, $2, $3, $4)`,
+          [requesterId, addresseeId, "accepted", new Date().toISOString()]
+        );
 
-        if (insertError) {
+        if (!rowCount) {
           log.error(
             {
               event: "qr_scan_request_failed",
@@ -690,11 +674,11 @@ export function createConnectionsRoutes(
       }
 
       const targetFetchStart = process.hrtime.bigint();
-      const { data: targetUser, error: targetError } = await supabase
-        .from("users")
-        .select("id")
-        .eq("id", target_user_id)
-        .single();
+      const { rows: targetRows } = await pool.query(
+        "SELECT id FROM users WHERE id = $1",
+        [target_user_id]
+      );
+      const targetUser = targetRows[0] ?? null;
       const targetFetchDurationMs =
         Number(process.hrtime.bigint() - targetFetchStart) / 1_000_000;
 
@@ -712,21 +696,13 @@ export function createConnectionsRoutes(
         );
       }
 
-      if (targetError || !targetUser) {
+      if (!targetUser) {
         log.error(
           {
             event: "connection_request_failure",
             userId,
             targetUserId: target_user_id,
             requestId,
-            dbError: targetError
-              ? {
-                  message: targetError.message,
-                  details: targetError.details,
-                  hint: targetError.hint,
-                  code: targetError.code,
-                }
-              : null,
           },
           "Failed to fetch target user for connection"
         );
@@ -737,7 +713,7 @@ export function createConnectionsRoutes(
       }
 
       const { row: existing, error: findError } =
-        await findConnectionBetweenUsers(supabase, userId, target_user_id);
+        await findConnectionBetweenUsers(pool, userId, target_user_id);
 
       if (findError) {
         log.error(
@@ -855,31 +831,21 @@ export function createConnectionsRoutes(
             });
           }
 
-          const { error: updateError } = await supabase
-            .from("connections")
-            .update({
-              requester_id: userId,
-              addressee_id: target_user_id,
-              status: "pending",
-              requester_blocked: false,
-              addressee_blocked: false,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", existing.id);
+          const { rowCount } = await pool.query(
+            `UPDATE connections
+             SET requester_id = $1, addressee_id = $2, status = $3,
+                 requester_blocked = false, addressee_blocked = false, updated_at = $4
+             WHERE id = $5`,
+            [userId, target_user_id, "pending", new Date().toISOString(), existing.id]
+          );
 
-          if (updateError) {
+          if (!rowCount) {
             log.error(
               {
                 event: "connection_request_failure",
                 userId,
                 targetUserId: target_user_id,
                 requestId,
-                dbError: {
-                  message: updateError.message,
-                  details: updateError.details,
-                  hint: updateError.hint,
-                  code: updateError.code,
-                },
               },
               "Failed to update connection row from rejected to pending"
             );
@@ -915,34 +881,21 @@ export function createConnectionsRoutes(
         }
       }
 
-      const { error: insertError, data: inserted } = await supabase
-        .from("connections")
-        .insert({
-          requester_id: userId,
-          addressee_id: target_user_id,
-          status: "pending",
-          requester_blocked: false,
-          addressee_blocked: false,
-          updated_at: new Date().toISOString(),
-        })
-        .select("id")
-        .single();
+      const { rows: insertedRows } = await pool.query(
+        `INSERT INTO connections (requester_id, addressee_id, status, requester_blocked, addressee_blocked, updated_at)
+         VALUES ($1, $2, $3, false, false, $4)
+         RETURNING id`,
+        [userId, target_user_id, "pending", new Date().toISOString()]
+      );
+      const inserted = insertedRows[0] ?? null;
 
-      if (insertError || !inserted) {
+      if (!inserted) {
         log.error(
           {
             event: "connection_request_failure",
             userId,
             targetUserId: target_user_id,
             requestId,
-            dbError: insertError
-              ? {
-                  message: insertError.message,
-                  details: insertError.details,
-                  hint: insertError.hint,
-                  code: insertError.code,
-                }
-              : null,
           },
           "Failed to insert new connection request"
         );
@@ -1030,35 +983,41 @@ export function createConnectionsRoutes(
       const status = parsed.data.status;
       const role = parsed.data.role ?? "all";
 
-      let query = supabase
-        .from("connections")
-        .select(
-          `id, 
-           requester_id, 
-           addressee_id, 
-           status, 
-           requester_blocked, 
-           addressee_blocked,
-           requester:users!requester_id(first_name, last_name),
-           addressee:users!addressee_id(first_name, last_name)`
-        );
-      
+      const conditions: string[] = [];
+      const params: unknown[] = [];
+      let paramIdx = 1;
+
       if (status) {
-        query = query.eq("status", status);
+        conditions.push(`c.status = $${paramIdx++}`);
+        params.push(status);
       }
 
       if (role === "incoming") {
-        query = query.eq("addressee_id", userId);
+        conditions.push(`c.addressee_id = $${paramIdx++}`);
+        params.push(userId);
       } else if (role === "outgoing") {
-        query = query.eq("requester_id", userId);
+        conditions.push(`c.requester_id = $${paramIdx++}`);
+        params.push(userId);
       } else {
-        query = query.or(
-          `requester_id.eq.${userId},addressee_id.eq.${userId}`
-        );
+        conditions.push(`(c.requester_id = $${paramIdx} OR c.addressee_id = $${paramIdx + 1})`);
+        params.push(userId, userId);
+        paramIdx += 2;
       }
 
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+      const sql = `
+        SELECT c.id, c.requester_id, c.addressee_id, c.status, c.requester_blocked, c.addressee_blocked,
+               r.first_name as r_first_name, r.last_name as r_last_name,
+               a.first_name as a_first_name, a.last_name as a_last_name
+        FROM connections c
+        LEFT JOIN users r ON c.requester_id = r.id
+        LEFT JOIN users a ON c.addressee_id = a.id
+        ${whereClause}
+      `;
+
       const fetchStart = process.hrtime.bigint();
-      const { data, error } = await query;
+      const { rows, rowCount } = await pool.query(sql, params);
       const fetchDurationMs =
         Number(process.hrtime.bigint() - fetchStart) / 1_000_000;
 
@@ -1075,18 +1034,12 @@ export function createConnectionsRoutes(
         );
       }
 
-      if (error) {
+      if (!rowCount) {
         log.error(
           {
             event: "connection_list_failure",
             userId,
             requestId,
-            dbError: {
-              message: error.message,
-              details: error.details,
-              hint: error.hint,
-              code: error.code,
-            },
           },
           "Failed to list connections"
         );
@@ -1097,19 +1050,22 @@ export function createConnectionsRoutes(
       }
 
       type ConnectionWithUsers = ConnectionRow & {
-        requester?: { first_name: string; last_name: string };
-        addressee?: { first_name: string; last_name: string };
+        r_first_name: string | null;
+        r_last_name: string | null;
+        a_first_name: string | null;
+        a_last_name: string | null;
       };
 
-      const rows = (data as unknown as ConnectionWithUsers[] | null) ?? [];
-      const connections = rows
+      const data = rows as ConnectionWithUsers[];
+      const connections = data
         .map((row) => {
           const otherUserId = getOtherUserId(row, userId);
           if (!otherUserId) {
             return null;
           }
-          const otherUser =
-            otherUserId === row.requester_id ? row.requester : row.addressee;
+          const isOtherRequester = otherUserId === row.requester_id;
+          const otherFirstName = isOtherRequester ? row.r_first_name : row.a_first_name;
+          const otherLastName = isOtherRequester ? row.r_last_name : row.a_last_name;
 
           let action_text = "";
           if (row.status === "accepted") {
@@ -1122,8 +1078,8 @@ export function createConnectionsRoutes(
           return {
             connection_id: row.id,
             user_id: otherUserId,
-            first_name: otherUser?.first_name ?? null,
-            last_name: otherUser?.last_name ?? null,
+            first_name: otherFirstName ?? null,
+            last_name: otherLastName ?? null,
             status: row.status,
             action_text: action_text || undefined,
           };
@@ -1206,30 +1162,36 @@ export function createConnectionsRoutes(
 
       const role = parsed.data.role ?? "incoming";
 
-      let query = supabase
-        .from("connections")
-        .select(
-          `id, 
-           requester_id, 
-           addressee_id, 
-           status,
-           requester:users!requester_id(first_name, last_name),
-           addressee:users!addressee_id(first_name, last_name)`
-        )
-        .eq("status", "pending");
+      const conditions: string[] = [`c.status = $1`];
+      const params: unknown[] = ["pending"];
+      let paramIdx = 2;
 
       if (role === "incoming") {
-        query = query.eq("addressee_id", userId);
+        conditions.push(`c.addressee_id = $${paramIdx++}`);
+        params.push(userId);
       } else if (role === "outgoing") {
-        query = query.eq("requester_id", userId);
+        conditions.push(`c.requester_id = $${paramIdx++}`);
+        params.push(userId);
       } else {
-        query = query.or(
-          `requester_id.eq.${userId},addressee_id.eq.${userId}`
-        );
+        conditions.push(`(c.requester_id = $${paramIdx} OR c.addressee_id = $${paramIdx + 1})`);
+        params.push(userId, userId);
+        paramIdx += 2;
       }
 
+      const whereClause = `WHERE ${conditions.join(" AND ")}`;
+
+      const sql = `
+        SELECT c.id, c.requester_id, c.addressee_id, c.status, c.requester_blocked, c.addressee_blocked,
+               r.first_name as r_first_name, r.last_name as r_last_name,
+               a.first_name as a_first_name, a.last_name as a_last_name
+        FROM connections c
+        LEFT JOIN users r ON c.requester_id = r.id
+        LEFT JOIN users a ON c.addressee_id = a.id
+        ${whereClause}
+      `;
+
       const fetchStart = process.hrtime.bigint();
-      const { data, error } = await query;
+      const { rows, rowCount } = await pool.query(sql, params);
       const fetchDurationMs =
         Number(process.hrtime.bigint() - fetchStart) / 1_000_000;
 
@@ -1246,18 +1208,12 @@ export function createConnectionsRoutes(
         );
       }
 
-      if (error) {
+      if (!rowCount) {
         log.error(
           {
             event: "connection_list_failure",
             userId,
             requestId,
-            dbError: {
-              message: error.message,
-              details: error.details,
-              hint: error.hint,
-              code: error.code,
-            },
           },
           "Failed to list pending connections"
         );
@@ -1268,24 +1224,27 @@ export function createConnectionsRoutes(
       }
 
       type ConnectionWithUsers = ConnectionRow & {
-        requester?: { first_name: string; last_name: string };
-        addressee?: { first_name: string; last_name: string };
+        r_first_name: string | null;
+        r_last_name: string | null;
+        a_first_name: string | null;
+        a_last_name: string | null;
       };
 
-      const rows = (data as unknown as ConnectionWithUsers[] | null) ?? [];
-      const connections = rows
+      const data = rows as ConnectionWithUsers[];
+      const connections = data
         .map((row) => {
           const otherUserId = getOtherUserId(row, userId);
           if (!otherUserId) {
             return null;
           }
-          const otherUser =
-            otherUserId === row.requester_id ? row.requester : row.addressee;
+          const isOtherRequester = otherUserId === row.requester_id;
+          const otherFirstName = isOtherRequester ? row.r_first_name : row.a_first_name;
+          const otherLastName = isOtherRequester ? row.r_last_name : row.a_last_name;
           return {
             connection_id: row.id,
             user_id: otherUserId,
-            first_name: otherUser?.first_name ?? null,
-            last_name: otherUser?.last_name ?? null,
+            first_name: otherFirstName ?? null,
+            last_name: otherLastName ?? null,
             status: row.status,
           };
         })
@@ -1362,13 +1321,12 @@ export function createConnectionsRoutes(
         );
 
         const fetchStart = process.hrtime.bigint();
-        const { data, error } = await supabase
-          .from("connections")
-          .select(
-            "id, requester_id, addressee_id, status, requester_blocked, addressee_blocked"
-          )
-          .eq("id", connectionId)
-          .single();
+        const { rows } = await pool.query(
+          `SELECT id, requester_id, addressee_id, status, requester_blocked, addressee_blocked
+           FROM connections WHERE id = $1`,
+          [connectionId]
+        );
+        const data = rows[0] ?? null;
         const fetchDurationMs =
           Number(process.hrtime.bigint() - fetchStart) / 1_000_000;
 
@@ -1386,7 +1344,7 @@ export function createConnectionsRoutes(
           );
         }
 
-        if (error || !data) {
+        if (!data) {
           log.info(
             {
               event: "connection_request_accept_not_found",
@@ -1438,27 +1396,18 @@ export function createConnectionsRoutes(
           });
         }
 
-        const { error: updateError } = await supabase
-          .from("connections")
-          .update({
-            status: "accepted",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", connectionId);
+        const { rowCount } = await pool.query(
+          "UPDATE connections SET status = $1, updated_at = $2 WHERE id = $3",
+          ["accepted", new Date().toISOString(), connectionId]
+        );
 
-        if (updateError) {
+        if (!rowCount) {
           log.error(
             {
               event: "connection_request_accept_failure",
               userId,
               connectionId,
               requestId,
-              dbError: {
-                message: updateError.message,
-                details: updateError.details,
-                hint: updateError.hint,
-                code: updateError.code,
-              },
             },
             "Failed to accept connection request"
           );
@@ -1540,13 +1489,12 @@ export function createConnectionsRoutes(
         );
 
         const fetchStart = process.hrtime.bigint();
-        const { data, error } = await supabase
-          .from("connections")
-          .select(
-            "id, requester_id, addressee_id, status, requester_blocked, addressee_blocked"
-          )
-          .eq("id", connectionId)
-          .single();
+        const { rows } = await pool.query(
+          `SELECT id, requester_id, addressee_id, status, requester_blocked, addressee_blocked
+           FROM connections WHERE id = $1`,
+          [connectionId]
+        );
+        const data = rows[0] ?? null;
         const fetchDurationMs =
           Number(process.hrtime.bigint() - fetchStart) / 1_000_000;
 
@@ -1564,7 +1512,7 @@ export function createConnectionsRoutes(
           );
         }
 
-        if (error || !data) {
+        if (!data) {
           log.info(
             {
               event: "connection_request_reject_not_found",
@@ -1616,27 +1564,18 @@ export function createConnectionsRoutes(
           });
         }
 
-        const { error: updateError } = await supabase
-          .from("connections")
-          .update({
-            status: "rejected",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", connectionId);
+        const { rowCount } = await pool.query(
+          "UPDATE connections SET status = $1, updated_at = $2 WHERE id = $3",
+          ["rejected", new Date().toISOString(), connectionId]
+        );
 
-        if (updateError) {
+        if (!rowCount) {
           log.error(
             {
               event: "connection_request_reject_failure",
               userId,
               connectionId,
               requestId,
-              dbError: {
-                message: updateError.message,
-                details: updateError.details,
-                hint: updateError.hint,
-                code: updateError.code,
-              },
             },
             "Failed to reject connection request"
           );
@@ -1716,13 +1655,12 @@ export function createConnectionsRoutes(
         );
 
         const fetchStart = process.hrtime.bigint();
-        const { data, error } = await supabase
-          .from("connections")
-          .select(
-            "id, requester_id, addressee_id, status, requester_blocked, addressee_blocked"
-          )
-          .eq("id", connectionId)
-          .single();
+        const { rows } = await pool.query(
+          `SELECT id, requester_id, addressee_id, status, requester_blocked, addressee_blocked
+           FROM connections WHERE id = $1`,
+          [connectionId]
+        );
+        const data = rows[0] ?? null;
         const fetchDurationMs =
           Number(process.hrtime.bigint() - fetchStart) / 1_000_000;
 
@@ -1740,7 +1678,7 @@ export function createConnectionsRoutes(
           );
         }
 
-        if (error || !data) {
+        if (!data) {
           log.info(
             {
               event: "connection_request_cancel_not_found",
@@ -1792,24 +1730,18 @@ export function createConnectionsRoutes(
           });
         }
 
-        const { error: deleteError } = await supabase
-          .from("connections")
-          .delete()
-          .eq("id", connectionId);
+        const { rowCount } = await pool.query(
+          "DELETE FROM connections WHERE id = $1",
+          [connectionId]
+        );
 
-        if (deleteError) {
+        if (!rowCount) {
           log.error(
             {
               event: "connection_request_cancel_failure",
               userId,
               connectionId,
               requestId,
-              dbError: {
-                message: deleteError.message,
-                details: deleteError.details,
-                hint: deleteError.hint,
-                code: deleteError.code,
-              },
             },
             "Failed to cancel connection request"
           );
@@ -1886,13 +1818,12 @@ export function createConnectionsRoutes(
       );
 
       const fetchStart = process.hrtime.bigint();
-      const { data, error } = await supabase
-        .from("connections")
-        .select(
-          "id, requester_id, addressee_id, status, requester_blocked, addressee_blocked"
-        )
-        .eq("id", connectionId)
-        .single();
+      const { rows } = await pool.query(
+        `SELECT id, requester_id, addressee_id, status, requester_blocked, addressee_blocked
+         FROM connections WHERE id = $1`,
+        [connectionId]
+      );
+      const data = rows[0] ?? null;
       const fetchDurationMs =
         Number(process.hrtime.bigint() - fetchStart) / 1_000_000;
 
@@ -1910,7 +1841,7 @@ export function createConnectionsRoutes(
         );
       }
 
-      if (error || !data) {
+      if (!data) {
         log.info(
           {
             event: "connection_remove_not_found",
@@ -1979,24 +1910,18 @@ export function createConnectionsRoutes(
         });
       }
 
-      const { error: deleteError } = await supabase
-        .from("connections")
-        .delete()
-        .eq("id", connectionId);
+      const { rowCount } = await pool.query(
+        "DELETE FROM connections WHERE id = $1",
+        [connectionId]
+      );
 
-      if (deleteError) {
+      if (!rowCount) {
         log.error(
           {
             event: "connection_remove_failure",
             userId,
             connectionId,
             requestId,
-            dbError: {
-              message: deleteError.message,
-              details: deleteError.details,
-              hint: deleteError.hint,
-              code: deleteError.code,
-            },
           },
           "Failed to remove connection"
         );
@@ -2085,11 +2010,11 @@ export function createConnectionsRoutes(
       }
 
       const targetFetchStart = process.hrtime.bigint();
-      const { data: targetUser, error: targetError } = await supabase
-        .from("users")
-        .select("id")
-        .eq("id", target_user_id)
-        .single();
+      const { rows: targetRows } = await pool.query(
+        "SELECT id FROM users WHERE id = $1",
+        [target_user_id]
+      );
+      const targetUser = targetRows[0] ?? null;
       const targetFetchDurationMs =
         Number(process.hrtime.bigint() - targetFetchStart) / 1_000_000;
 
@@ -2107,21 +2032,13 @@ export function createConnectionsRoutes(
         );
       }
 
-      if (targetError || !targetUser) {
+      if (!targetUser) {
         log.error(
           {
             event: "connection_block_failure",
             userId,
             targetUserId: target_user_id,
             requestId,
-            dbError: targetError
-              ? {
-                  message: targetError.message,
-                  details: targetError.details,
-                  hint: targetError.hint,
-                  code: targetError.code,
-                }
-              : null,
           },
           "Failed to fetch block target user"
         );
@@ -2132,7 +2049,7 @@ export function createConnectionsRoutes(
       }
 
       const { row: existing, error: findError } =
-        await findConnectionBetweenUsers(supabase, userId, target_user_id);
+        await findConnectionBetweenUsers(pool, userId, target_user_id);
 
       if (findError) {
         log.error(
@@ -2158,30 +2075,19 @@ export function createConnectionsRoutes(
       const callerIsRequester = requesterId === userId;
 
       if (!existing) {
-        const { error: insertError } = await supabase
-          .from("connections")
-          .insert({
-            requester_id: requesterId,
-            addressee_id: addresseeId,
-            status: "blocked",
-            requester_blocked: callerIsRequester,
-            addressee_blocked: !callerIsRequester,
-            updated_at: new Date().toISOString(),
-          });
+        const { rowCount } = await pool.query(
+          `INSERT INTO connections (requester_id, addressee_id, status, requester_blocked, addressee_blocked, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [requesterId, addresseeId, "blocked", callerIsRequester, !callerIsRequester, new Date().toISOString()]
+        );
 
-        if (insertError) {
+        if (!rowCount) {
           log.error(
             {
               event: "connection_block_failure",
               userId,
               targetUserId: target_user_id,
               requestId,
-              dbError: {
-                message: insertError.message,
-                details: insertError.details,
-                hint: insertError.hint,
-                code: insertError.code,
-              },
             },
             "Failed to insert block connection row"
           );
@@ -2246,31 +2152,21 @@ export function createConnectionsRoutes(
         });
       }
 
-      const { error: updateError } = await supabase
-        .from("connections")
-        .update({
-          requester_id: requesterId,
-          addressee_id: addresseeId,
-          status: "blocked",
-          requester_blocked: nextRequesterBlocked,
-          addressee_blocked: nextAddresseeBlocked,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", existing.id);
+      const { rowCount } = await pool.query(
+        `UPDATE connections
+         SET requester_id = $1, addressee_id = $2, status = $3,
+             requester_blocked = $4, addressee_blocked = $5, updated_at = $6
+         WHERE id = $7`,
+        [requesterId, addresseeId, "blocked", nextRequesterBlocked, nextAddresseeBlocked, new Date().toISOString(), existing.id]
+      );
 
-      if (updateError) {
+      if (!rowCount) {
         log.error(
           {
             event: "connection_block_failure",
             userId,
             targetUserId: target_user_id,
             requestId,
-            dbError: {
-              message: updateError.message,
-              details: updateError.details,
-              hint: updateError.hint,
-              code: updateError.code,
-            },
           },
           "Failed to update connection row for block"
         );
@@ -2361,7 +2257,7 @@ export function createConnectionsRoutes(
       }
 
       const { row: existing, error: findError } =
-        await findConnectionBetweenUsers(supabase, userId, target_user_id);
+        await findConnectionBetweenUsers(pool, userId, target_user_id);
 
       if (findError) {
         log.error(
@@ -2437,24 +2333,18 @@ export function createConnectionsRoutes(
         : false;
 
       if (!nextRequesterBlocked && !nextAddresseeBlocked) {
-        const { error: deleteError } = await supabase
-          .from("connections")
-          .delete()
-          .eq("id", existing.id);
+        const { rowCount } = await pool.query(
+          "DELETE FROM connections WHERE id = $1",
+          [existing.id]
+        );
 
-        if (deleteError) {
+        if (!rowCount) {
           log.error(
             {
               event: "connection_unblock_failure",
               userId,
               targetUserId: target_user_id,
               requestId,
-              dbError: {
-                message: deleteError.message,
-                details: deleteError.details,
-                hint: deleteError.hint,
-                code: deleteError.code,
-              },
             },
             "Failed to delete connection row on unblock"
           );
@@ -2464,31 +2354,21 @@ export function createConnectionsRoutes(
           });
         }
       } else {
-        const { error: updateError } = await supabase
-          .from("connections")
-          .update({
-            requester_id: requesterId,
-            addressee_id: addresseeId,
-            status: "blocked",
-            requester_blocked: nextRequesterBlocked,
-            addressee_blocked: nextAddresseeBlocked,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", existing.id);
+        const { rowCount } = await pool.query(
+          `UPDATE connections
+           SET requester_id = $1, addressee_id = $2, status = $3,
+               requester_blocked = $4, addressee_blocked = $5, updated_at = $6
+           WHERE id = $7`,
+          [requesterId, addresseeId, "blocked", nextRequesterBlocked, nextAddresseeBlocked, new Date().toISOString(), existing.id]
+        );
 
-        if (updateError) {
+        if (!rowCount) {
           log.error(
             {
               event: "connection_unblock_failure",
               userId,
               targetUserId: target_user_id,
               requestId,
-              dbError: {
-                message: updateError.message,
-                details: updateError.details,
-                hint: updateError.hint,
-                code: updateError.code,
-              },
             },
             "Failed to update connection row on unblock"
           );

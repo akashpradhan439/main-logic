@@ -1,8 +1,9 @@
 import "dotenv/config";
 import amqp from "amqplib";
 import pino from "pino";
+import pg from "pg";
 import { config } from "../config.js";
-import { supabase } from "../lib/supabase.js";
+import { pool } from "../lib/db.js";
 import {
   type LocationUpdatedEvent,
   publishHexOverlapNotification,
@@ -113,24 +114,13 @@ async function main() {
         );
 
         // 1. Fetch accepted connections for caller
-        const { data: connections, error: connError } = await supabase
-          .from("connections")
-          .select("requester_id, addressee_id")
-          .or(`requester_id.eq.${userId},addressee_id.eq.${userId}`)
-          .eq("status", "accepted");
-
-        if (connError) {
-          log.error(
-            { ...logCtx, userId, err: connError.message },
-            "Failed to fetch connections"
-          );
-          metrics.incQueueFailed();
-          channel.nack(msg, false, true);
-          return;
-        }
+        const { rows: connections } = await pool.query(
+          "SELECT requester_id, addressee_id FROM connections WHERE (requester_id = $1 OR addressee_id = $1) AND status = 'accepted'",
+          [userId]
+        );
 
         const connectedUserIds = new Set<string>();
-        for (const c of connections ?? []) {
+        for (const c of connections) {
           const other =
             c.requester_id === userId ? c.addressee_id : c.requester_id;
           if (other) connectedUserIds.add(other);
@@ -148,24 +138,14 @@ async function main() {
         }
 
         // 2. Fetch users with h3 data for connected users
-        const { data: users, error: usersError } = await supabase
-          .from("users")
-          .select("id, h3_cell, h3_neighbors")
-          .in("id", Array.from(connectedUserIds));
-
-        if (usersError) {
-          log.error(
-            { ...logCtx, userId, err: usersError.message },
-            "Failed to fetch users"
-          );
-          metrics.incQueueFailed();
-          channel.nack(msg, false, true);
-          return;
-        }
+        const { rows: users } = await pool.query(
+          "SELECT id, h3_cell, h3_neighbors FROM users WHERE id = ANY($1)",
+          [Array.from(connectedUserIds)]
+        );
 
         const callerHexSet = new Set([centerHex, ...neighborHexes]);
 
-        for (const target of users ?? []) {
+        for (const target of users) {
           const targetId = target.id as string;
           const targetCenter = target.h3_cell as string | null;
           const targetNeighbors = (target.h3_neighbors as string[] | null) ?? [];
@@ -183,24 +163,12 @@ async function main() {
 
           // 3. Check 24h dedup
           const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-          const { data: recentNotifications, error: notifError } = await supabase
-            .from("notifications")
-            .select("id")
-            .eq("user_a_id", userA)
-            .eq("user_b_id", userB)
-            .eq("notification_type", "hex_overlap")
-            .gte("created_at", twentyFourHoursAgo)
-            .limit(1);
+          const { rows: recentNotifications } = await pool.query(
+            "SELECT id FROM notifications WHERE user_a_id = $1 AND user_b_id = $2 AND notification_type = $3 AND created_at >= $4 LIMIT 1",
+            [userA, userB, "hex_overlap", twentyFourHoursAgo]
+          );
 
-          if (notifError) {
-            log.error(
-              { ...logCtx, callerId: userId, otherUserId: targetId, err: notifError.message },
-              "Failed to check notifications"
-            );
-            continue;
-          }
-
-          if (recentNotifications && recentNotifications.length > 0) {
+          if (recentNotifications.length > 0) {
             log.info(
               {
                 ...logCtx,
@@ -216,17 +184,14 @@ async function main() {
           }
 
           // 4. Insert notification row
-          const { error: insertError } = await supabase.from("notifications").insert({
-            user_a_id: userA,
-            user_b_id: userB,
-            initiator_id: userId,
-            overlap_hex: overlapHex,
-            notification_type: "hex_overlap",
-          });
-
-          if (insertError) {
+          try {
+            await pool.query(
+              "INSERT INTO notifications (user_a_id, user_b_id, initiator_id, overlap_hex, notification_type) VALUES ($1, $2, $3, $4, $5)",
+              [userA, userB, userId, overlapHex, "hex_overlap"]
+            );
+          } catch (insertError) {
             log.error(
-              { ...logCtx, callerId: userId, otherUserId: targetId, err: insertError.message },
+              { ...logCtx, callerId: userId, otherUserId: targetId, err: (insertError as Error).message },
               "Failed to insert notification"
             );
             continue;

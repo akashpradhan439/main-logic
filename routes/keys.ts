@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
+import type pg from "pg";
 import { z } from "zod";
-import { supabase } from "../lib/supabase.js";
+import { pool } from "../lib/db.js";
 import { verifyAccessToken, AuthError } from "../shared/auth.js";
 import { uploadPrekeys, getPrekeyBundle, rotateSignedPrekey, getOpkStatus } from "../lib/keys.js";
 import { findConnectionBetweenUsers, isPairBlocked } from "../lib/connections.js";
@@ -72,7 +73,7 @@ const RotatePqSignedPrekeySchema = z.object({
 // ─── Dependency Injection ─────────────────────────────────────────────────────
 
 export type KeysRouteDeps = {
-  supabase: typeof supabase;
+  pool: pg.Pool;
   verifyAccessToken: typeof verifyAccessToken;
   uploadPrekeys: typeof uploadPrekeys;
   getPrekeyBundle: typeof getPrekeyBundle;
@@ -85,7 +86,7 @@ export type KeysRouteDeps = {
 
 export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
   const deps: KeysRouteDeps = {
-    supabase,
+    pool,
     verifyAccessToken,
     uploadPrekeys,
     getPrekeyBundle,
@@ -99,7 +100,7 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
 
   return async function keysRoutes(app: FastifyInstance) {
     const {
-      supabase, verifyAccessToken, uploadPrekeys, getPrekeyBundle,
+      pool, verifyAccessToken, uploadPrekeys, getPrekeyBundle,
       rotateSignedPrekey, getOpkStatus, findConnectionBetweenUsers, isPairBlocked, AuthError,
     } = deps;
 
@@ -138,7 +139,7 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
         const effectiveSigningKey = identitySigningKey ?? identityKey;
 
         const { error } = await uploadPrekeys(
-          supabase as any,
+          pool,
           userId,
           {
             identityKey,
@@ -192,7 +193,7 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
         // drain another user's OPK pool. Self-fetch is allowed (e.g. diagnostics).
         if (targetUserId !== requesterId) {
           const { row: connection, error: connError } = await findConnectionBetweenUsers(
-            supabase as any, requesterId, targetUserId
+            pool, requesterId, targetUserId
           );
           if (connError) {
             log.error({ event: "keys_bundle_conn_error", requesterId, targetUserId, error: connError }, "Failed to check connection");
@@ -204,7 +205,7 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
           }
         }
 
-        const { bundle, error, opkPoolLow } = await getPrekeyBundle(supabase as any, targetUserId);
+        const { bundle, error, opkPoolLow } = await getPrekeyBundle(pool, targetUserId);
 
         if (error || !bundle) {
           // M7: distinguish a stale bundle (re-upload needed) from not-found.
@@ -253,7 +254,7 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
 
         const { signedPreKey, signedPreKeyId, signedPreKeySignature } = parsed.data;
 
-        const { error } = await rotateSignedPrekey(supabase as any, userId, {
+        const { error } = await rotateSignedPrekey(pool, userId, {
           prekeyId:  signedPreKeyId,
           publicKey: signedPreKey,
           signature: signedPreKeySignature,
@@ -298,7 +299,7 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
 
         const { pqSignedPreKey, pqSignedPreKeyId, pqSignedPreKeySignature } = parsed.data;
 
-        const { error } = await rotateSignedPrekey(supabase as any, userId, {
+        const { error } = await rotateSignedPrekey(pool, userId, {
           prekeyId:  pqSignedPreKeyId,
           publicKey: pqSignedPreKey,
           signature: pqSignedPreKeySignature,
@@ -336,7 +337,7 @@ export function createKeysRoutes(overrides: Partial<KeysRouteDeps> = {}) {
           throw err;
         }
 
-        const { classical, pq, error } = await getOpkStatus(supabase as any, userId);
+        const { classical, pq, error } = await getOpkStatus(pool, userId);
         if (error) {
           log.error({ event: "opk_status_failure", userId, error }, "Failed to get OPK status");
           return reply.status(500).send({ success: false, error: "Failed to get OPK status" });

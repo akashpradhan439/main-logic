@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
-import { supabase as defaultSupabase } from "./supabase.js";
+import pg from "pg";
+import { pool } from "./db.js";
 import { redisGet, redisSet } from "./redis.js";
 import { agentLLMClient } from "./azureClient.js";
 import { searchNearbyPlaces } from "./foursquareClient.js";
@@ -116,7 +117,7 @@ export type SwarmState = {
   emptyReason: string | null;
 };
 
-// ─── Streaming hooks (additive — enables realtime demo surfaces) ──────────────
+// ─── Streaming hooks (additive — enables realtime surfaces) ──────────────
 //
 // runSwarm accepts an optional emitter + AbortSignal so a UI can observe the
 // swarm as it runs and stop it mid-flight. When omitted, behavior is identical
@@ -148,7 +149,7 @@ export class SwarmAbortError extends Error {
   }
 }
 
-// ─── Terminal colors per agent (visual fidelity for demo logs) ────────────────
+// ─── Terminal colors per agent (visual fidelity for logs) ────────────────
 
 const COLORS: Record<AgentName, string> = {
   planner: "\x1b[36m",    // Cyan
@@ -286,18 +287,18 @@ function getDistanceKm(a: { lat: number; lng: number }, b: { lat: number; lng: n
 
 async function researcherAgent(
   state: SwarmState,
-  supabaseClient: typeof defaultSupabase,
+  client: pg.Pool,
   foursquareApiKey: string
 ): Promise<void> {
   const t0 = Date.now();
   agentLog("researcher", `Fetching data for user ${state.userId}`);
   state.phase = "research";
 
-  const { data: me } = await supabaseClient
-    .from("users")
-    .select("id, first_name, bio, interests, h3_cell, language_preference")
-    .eq("id", state.userId)
-    .single();
+  const { rows: userRows } = await client.query(
+    "SELECT id, first_name, bio, interests, h3_cell, language_preference FROM users WHERE id = $1",
+    [state.userId]
+  );
+  const me = userRows[0] as Record<string, unknown> | undefined;
 
   if (!me) throw new Error("User profile not found");
 
@@ -306,11 +307,12 @@ async function researcherAgent(
   const myInterests = (me.interests as string[] | null) ?? [];
 
   // Accepted connections
-  const { data: connRows } = await supabaseClient
-    .from("connections")
-    .select("requester_id, addressee_id")
-    .or(`requester_id.eq.${state.userId},addressee_id.eq.${state.userId}`)
-    .eq("status", "accepted");
+  const { rows: connRows } = await client.query(
+    `SELECT requester_id, addressee_id FROM connections
+     WHERE (requester_id = $1 OR addressee_id = $1)
+     AND status = 'accepted'`,
+    [state.userId]
+  );
 
   const rawPartnerIds = (connRows ?? []).map((r) =>
     r.requester_id === state.userId ? r.addressee_id : r.requester_id
@@ -319,8 +321,7 @@ async function researcherAgent(
   let partnerIds = [...rawPartnerIds];
 
   // When a target connection is specified, narrow the candidate pool to just
-  // that person (if they are in the accepted set). This powers the demo
-  // connection-picker without changing the overall swarm logic.
+  // that person (if they are in the accepted set).
   if (state.targetConnectionId) {
     if (!rawPartnerIds.includes(state.targetConnectionId)) {
       state.emptyReason = "Target user is not an accepted connection.";
@@ -330,26 +331,30 @@ async function researcherAgent(
 
   let connections: ConnectionCandidate[] = [];
   if (partnerIds.length > 0) {
-    const [{ data: partners }, { data: notifs }] = await Promise.all([
-      supabaseClient
-        .from("users")
-        .select("id, first_name, last_name, bio, interests, h3_cell")
-        .in("id", partnerIds),
-      supabaseClient
-        .from("notifications")
-        .select("user_a_id, user_b_id")
-        .or(`user_a_id.eq.${state.userId},user_b_id.eq.${state.userId}`)
-        .limit(100),
+    const [partnersResult, notifsResult] = await Promise.all([
+      client.query(
+        "SELECT id, first_name, last_name, bio, interests, h3_cell FROM users WHERE id = ANY($1)",
+        [partnerIds]
+      ),
+      client.query(
+        `SELECT user_a_id, user_b_id FROM notifications
+         WHERE user_a_id = $1 OR user_b_id = $1
+         LIMIT 100`,
+        [state.userId]
+      ),
     ]);
 
+    const partners = partnersResult.rows;
+    const notifs = notifsResult.rows;
+
     const proxCounts = new Map<string, number>();
-    for (const n of notifs ?? []) {
+    for (const n of notifs) {
       const partner = n.user_a_id === state.userId ? n.user_b_id : n.user_a_id;
       proxCounts.set(partner, (proxCounts.get(partner) ?? 0) + 1);
     }
 
-    connections = (partners ?? [])
-      .map((p) => {
+    connections = partners
+      .map((p: Record<string, unknown>) => {
         const cInterests = (p.interests as string[] | null) ?? [];
         const sharedInterests = cInterests.filter((i) => myInterests.includes(i));
         const score = sharedInterests.length * 3 + (proxCounts.get(p.id as string) ?? 0) + (p.h3_cell === h3Cell ? 2 : 0);
@@ -687,7 +692,7 @@ Return ONLY valid JSON: {"approved":true/false,"feedback":"brief explanation","i
 export type SwarmParams = {
   userId: string;
   taskType: TaskType;
-  supabase?: typeof defaultSupabase;
+  supabase?: pg.Pool;
   foursquareApiKey: string;
   /** Optional realtime hooks: stream events and/or abort the run. */
   hooks?: SwarmHooks;
@@ -696,7 +701,7 @@ export type SwarmParams = {
 };
 
 export async function runSwarm(params: SwarmParams): Promise<SwarmState> {
-  const { userId, taskType, supabase = defaultSupabase, foursquareApiKey, hooks, targetConnectionId } = params;
+  const { userId, taskType, supabase = pool, foursquareApiKey, hooks, targetConnectionId } = params;
   const runId = randomUUID();
 
   const emit: SwarmEmit = hooks?.emit ?? (() => {});
@@ -746,11 +751,11 @@ export async function runSwarm(params: SwarmParams): Promise<SwarmState> {
     // 1. Planner
     checkAbort();
     emit({ type: "agent_start", agent: "planner", phase: "planning" });
-    const { data: preview } = await supabase
-      .from("users")
-      .select("first_name, bio, interests")
-      .eq("id", userId)
-      .single();
+    const { rows: previewRows } = await supabase.query(
+      "SELECT first_name, bio, interests FROM users WHERE id = $1",
+      [userId]
+    );
+    const preview = previewRows[0] as Record<string, unknown> | undefined;
 
     await plannerAgent(state, {
       firstName: (preview?.first_name as string) ?? "User",
@@ -842,10 +847,10 @@ export async function resumeSwarm(params: {
   runId: string;
   approved: boolean;
   feedback?: string;
-  supabase?: typeof defaultSupabase;
+  supabase?: pg.Pool;
   foursquareApiKey: string;
 }): Promise<SwarmState> {
-  const { runId, approved, feedback, supabase = defaultSupabase, foursquareApiKey } = params;
+  const { runId, approved, feedback, supabase = pool, foursquareApiKey } = params;
 
   const state = await loadSwarmState(runId);
   if (!state) throw new Error("Swarm run not found or expired");

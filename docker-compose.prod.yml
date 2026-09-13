@@ -112,22 +112,6 @@ services:
     command:
       - "n8n import:workflow --input=/home/node/workflows/meetup-spots.json && n8n publish:workflow --id=meetup-spots-v1 && n8n import:workflow --input=/home/node/workflows/meetup-suggestions.json && n8n publish:workflow --id=meetup-suggestions-v1 && n8n import:workflow --input=/home/node/workflows/events-scraper.json && n8n publish:workflow --id=events-scraper-v1 && n8n start"
 
-  # Reuses the image built by the `api` service (same Dockerfile/context) instead
-  # of declaring its own `build:`, which would make BuildKit run a second full
-  # image build in parallel and exhaust the VM's RAM during deploy.
-  demo:
-    image: mainlogic-app:latest
-    container_name: mainlogic-demo
-    restart: always
-    depends_on:
-      - api
-    env_file:
-      - .env
-    environment:
-      - DEMO_HOST=0.0.0.0
-      - DEMO_PORT=4505
-    command: ["node", "dist/demo/server.js"]
-
   # iskcon-site:
   #   build: ./iskcon-site
   #   image: iskcon-site:latest
@@ -144,7 +128,6 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - api
-      - demo
       # - iskcon-site
 
 volumes:

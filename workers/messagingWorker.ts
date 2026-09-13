@@ -2,8 +2,9 @@ import "dotenv/config";
 import apn from "apn";
 import amqp from "amqplib";
 import pino from "pino";
+import pg from "pg";
 import { config } from "../config.js";
-import { supabase } from "../lib/supabase.js";
+import { pool } from "../lib/db.js";
 import type { NewMessageEvent } from "../lib/rabbitmq.js";
 import { createWorkerMetrics } from "../lib/workerMetrics.js";
 
@@ -49,29 +50,19 @@ function getApnProvider(): apn.Provider | null {
 }
 
 async function getDeviceToken(userId: string): Promise<string | null> {
-  const { data, error } = await supabase
-    .from("users")
-    .select("device_token")
-    .eq("id", userId)
-    .single();
-
-  if (error || !data?.device_token) {
+  const { rows } = await pool.query("SELECT device_token FROM users WHERE id = $1", [userId]);
+  if (rows.length === 0 || !rows[0].device_token) {
     return null;
   }
-  return data.device_token as string;
+  return rows[0].device_token as string;
 }
 
 async function getSenderName(userId: string): Promise<string> {
-  const { data, error } = await supabase
-    .from("users")
-    .select("first_name")
-    .eq("id", userId)
-    .single();
-
-  if (error || !data?.first_name) {
+  const { rows } = await pool.query("SELECT first_name FROM users WHERE id = $1", [userId]);
+  if (rows.length === 0 || !rows[0].first_name) {
     return "Someone";
   }
-  return data.first_name as string;
+  return rows[0].first_name as string;
 }
 
 async function sendMessageNotification(
@@ -101,7 +92,6 @@ async function sendMessageNotification(
   note.expiry = Math.floor(Date.now() / 1000) + 3600;
   note.sound = "default";
 
-  // Build alert message - Always generic for E2EE to maintain privacy
   if (event.attachmentType) {
     const mediaType = event.attachmentType.startsWith("image/") ? "an image"
       : event.attachmentType.startsWith("video/") ? "a video"
@@ -111,10 +101,6 @@ async function sendMessageNotification(
     note.alert = { title: senderName, body: "Sent you a message" };
   }
 
-  // #11: keep the payload small — the push is only a wake-up; the client fetches
-  // the actual ciphertext via SSE/REST. Embedding the full envelope (ML-KEM PQ
-  // ciphertext ~1088B + bootstrap) can blow past the ~4KB APNs payload limit and
-  // make the bootstrap (first-message) push fail outright.
   note.payload = {
     type: "new_message",
     conversationId: event.conversationId,

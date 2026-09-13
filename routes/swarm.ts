@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { supabase } from "../lib/supabase.js";
+import pg from "pg";
+import { pool } from "../lib/db.js";
 import { verifyAccessToken, AuthError } from "../shared/auth.js";
 import { config } from "../config.js";
 import {
@@ -16,7 +17,7 @@ const ApproveSchema = z.object({
 }).strict();
 
 export type SwarmRouteDeps = {
-  supabase: typeof supabase;
+  pool: pg.Pool;
   verifyAccessToken: typeof verifyAccessToken;
   AuthError: typeof AuthError;
   foursquareApiKey: string;
@@ -24,7 +25,7 @@ export type SwarmRouteDeps = {
 
 export function createSwarmRoutes(overrides: Partial<SwarmRouteDeps> = {}) {
   const deps: SwarmRouteDeps = {
-    supabase,
+    pool,
     verifyAccessToken,
     AuthError,
     foursquareApiKey: config.foursquareApiKey,
@@ -32,7 +33,7 @@ export function createSwarmRoutes(overrides: Partial<SwarmRouteDeps> = {}) {
   };
 
   return async function swarmRoutes(app: FastifyInstance) {
-    const { supabase, verifyAccessToken, AuthError, foursquareApiKey } = deps;
+    const { pool, verifyAccessToken, AuthError, foursquareApiKey } = deps;
 
     // ─── POST /swarm/meetup ───────────────────────────────────────────────────
     app.post("/swarm/meetup", async (req, reply) => {
@@ -51,7 +52,7 @@ export function createSwarmRoutes(overrides: Partial<SwarmRouteDeps> = {}) {
 
         log.info({ event: "swarm_meetup_start", userId }, "Starting meetup swarm");
 
-        const state = await runSwarm({ userId, taskType: "meetup", supabase, foursquareApiKey });
+        const state = await runSwarm({ userId, taskType: "meetup", pool, foursquareApiKey });
 
         log.info(
           { event: "swarm_meetup_done", userId, runId: state.runId, phase: state.phase, attempts: state.attempts, provider: state.llmProvider },
@@ -95,7 +96,7 @@ export function createSwarmRoutes(overrides: Partial<SwarmRouteDeps> = {}) {
 
         log.info({ event: "swarm_connections_start", userId }, "Starting connections swarm");
 
-        const state = await runSwarm({ userId, taskType: "connections", supabase, foursquareApiKey });
+        const state = await runSwarm({ userId, taskType: "connections", pool, foursquareApiKey });
 
         log.info(
           { event: "swarm_connections_done", userId, runId: state.runId, phase: state.phase, attempts: state.attempts },
@@ -203,7 +204,7 @@ export function createSwarmRoutes(overrides: Partial<SwarmRouteDeps> = {}) {
           runId,
           approved: parsed.data.approved,
           ...(parsed.data.feedback !== undefined ? { feedback: parsed.data.feedback } : {}),
-          supabase,
+          pool,
           foursquareApiKey,
         });
 

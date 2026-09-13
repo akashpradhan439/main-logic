@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import { supabase } from "../lib/supabase.js";
+import pg from "pg";
+import { pool } from "../lib/db.js";
 import { verifyAccessToken, AuthError } from "../shared/auth.js";
 import { redisGet, redisSet } from "../lib/redis.js";
 import {
@@ -30,7 +31,7 @@ function scoreCandidate(
 }
 
 export type AiRouteDeps = {
-  supabase: typeof supabase;
+  pool: pg.Pool;
   verifyAccessToken: typeof verifyAccessToken;
   AuthError: typeof AuthError;
   redisGet: typeof redisGet;
@@ -41,7 +42,7 @@ export type AiRouteDeps = {
 
 export function createAiRoutes(overrides: Partial<AiRouteDeps> = {}) {
   const deps: AiRouteDeps = {
-    supabase,
+    pool,
     verifyAccessToken,
     AuthError,
     redisGet,
@@ -52,7 +53,7 @@ export function createAiRoutes(overrides: Partial<AiRouteDeps> = {}) {
   };
 
   return async function aiRoutes(app: FastifyInstance) {
-    const { supabase, verifyAccessToken, AuthError, redisGet, redisSet, suggestConnections, suggestInterests } = deps;
+    const { pool, verifyAccessToken, AuthError, redisGet, redisSet, suggestConnections, suggestInterests } = deps;
 
     app.get("/ai/connections/suggestions", async (req, reply) => {
       const log = req.log;
@@ -73,12 +74,8 @@ export function createAiRoutes(overrides: Partial<AiRouteDeps> = {}) {
         }
 
         // 1. Cache check (keyed by language so language switches don't return stale prose)
-        const { data: cachedUserLang } = await supabase
-          .from("users")
-          .select("language_preference")
-          .eq("id", userId)
-          .single();
-        const userLang = (cachedUserLang?.language_preference as string | null) ?? "en";
+        const langResult = await pool.query("SELECT language_preference FROM users WHERE id = $1", [userId]);
+        const userLang = (langResult.rows[0]?.language_preference as string | null) ?? "en";
         const cacheKey = `ai:suggestions:${userId}:${userLang}`;
         const cached = await redisGet(cacheKey);
         if (cached) {
@@ -92,14 +89,14 @@ export function createAiRoutes(overrides: Partial<AiRouteDeps> = {}) {
         }
 
         // 2. Fetch current user profile
-        const { data: me, error: meErr } = await supabase
-          .from("users")
-          .select("h3_cell, h3_neighbors, bio, interests, language_preference")
-          .eq("id", userId)
-          .single();
+        const meResult = await pool.query(
+          "SELECT h3_cell, h3_neighbors, bio, interests, language_preference FROM users WHERE id = $1",
+          [userId]
+        );
+        const me = meResult.rows[0];
 
-        if (meErr || !me) {
-          log.error({ event: "ai_suggestions_me_fetch_failure", userId, meErr }, "Failed to fetch current user");
+        if (!me) {
+          log.error({ event: "ai_suggestions_me_fetch_failure", userId }, "Failed to fetch current user");
           return reply
             .status(500)
             .send({ success: false, error: req.t("common.errors.unable_to_process") });
@@ -111,21 +108,14 @@ export function createAiRoutes(overrides: Partial<AiRouteDeps> = {}) {
         const myLanguage = (me.language_preference as string | null) ?? "en";
 
         // 3. Fetch exclusion set (all connections of any status involving current user)
-        const { data: myConnRows, error: connErr } = await supabase
-          .from("connections")
-          .select("requester_id, addressee_id, status")
-          .or(`requester_id.eq.${userId},addressee_id.eq.${userId}`);
-
-        if (connErr) {
-          log.error({ event: "ai_suggestions_conn_fetch_failure", userId, connErr }, "Failed to fetch connections");
-          return reply
-            .status(500)
-            .send({ success: false, error: req.t("common.errors.unable_to_process") });
-        }
+        const connResult = await pool.query(
+          "SELECT requester_id, addressee_id, status FROM connections WHERE requester_id = $1 OR addressee_id = $1",
+          [userId]
+        );
 
         const excludeIds = new Set<string>([userId]);
         const acceptedPartnerIds = new Set<string>();
-        for (const row of myConnRows ?? []) {
+        for (const row of connResult.rows) {
           const partnerId = row.requester_id === userId ? row.addressee_id : row.requester_id;
           excludeIds.add(partnerId);
           if (row.status === "accepted") acceptedPartnerIds.add(partnerId);
@@ -147,25 +137,22 @@ export function createAiRoutes(overrides: Partial<AiRouteDeps> = {}) {
           (h): h is string => typeof h === "string" && h.length > 0
         );
         if (hexesToSearch.length > 0) {
-          const { data: nearbyUsers } = await supabase
-            .from("users")
-            .select("id")
-            .in("h3_cell", hexesToSearch)
-            .limit(50);
-          for (const u of nearbyUsers ?? []) {
+          const nearbyResult = await pool.query(
+            "SELECT id FROM users WHERE h3_cell = ANY($1) LIMIT 50",
+            [hexesToSearch]
+          );
+          for (const u of nearbyResult.rows) {
             if (excludeIds.has(u.id)) continue;
             ensure(u.id).isNearby = true;
           }
         }
 
         // 4b. Proximity history via notifications table
-        const { data: notifRows } = await supabase
-          .from("notifications")
-          .select("user_a_id, user_b_id")
-          .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
-          .order("created_at", { ascending: false })
-          .limit(100);
-        for (const n of notifRows ?? []) {
+        const notifResult = await pool.query(
+          "SELECT user_a_id, user_b_id FROM notifications WHERE user_a_id = $1 OR user_b_id = $1 ORDER BY created_at DESC LIMIT 100",
+          [userId]
+        );
+        for (const n of notifResult.rows) {
           const partner = n.user_a_id === userId ? n.user_b_id : n.user_a_id;
           if (excludeIds.has(partner)) continue;
           ensure(partner).proximityCount += 1;
@@ -174,21 +161,17 @@ export function createAiRoutes(overrides: Partial<AiRouteDeps> = {}) {
         // 4c. Friends-of-friends (two queries to avoid PostgREST .or/.in escaping issues)
         if (acceptedPartnerIds.size > 0) {
           const partnerList = Array.from(acceptedPartnerIds);
-          const [{ data: fofRowsA }, { data: fofRowsB }] = await Promise.all([
-            supabase
-              .from("connections")
-              .select("requester_id, addressee_id")
-              .in("requester_id", partnerList)
-              .eq("status", "accepted")
-              .limit(200),
-            supabase
-              .from("connections")
-              .select("requester_id, addressee_id")
-              .in("addressee_id", partnerList)
-              .eq("status", "accepted")
-              .limit(200),
+          const [fofResultA, fofResultB] = await Promise.all([
+            pool.query(
+              "SELECT requester_id, addressee_id FROM connections WHERE requester_id = ANY($1) AND status = 'accepted' LIMIT 200",
+              [partnerList]
+            ),
+            pool.query(
+              "SELECT requester_id, addressee_id FROM connections WHERE addressee_id = ANY($1) AND status = 'accepted' LIMIT 200",
+              [partnerList]
+            ),
           ]);
-          const allFofRows = [...(fofRowsA ?? []), ...(fofRowsB ?? [])];
+          const allFofRows = [...fofResultA.rows, ...fofResultB.rows];
           for (const row of allFofRows) {
             const aInPartners = acceptedPartnerIds.has(row.requester_id);
             const bInPartners = acceptedPartnerIds.has(row.addressee_id);
@@ -207,20 +190,10 @@ export function createAiRoutes(overrides: Partial<AiRouteDeps> = {}) {
 
         // 5. Fetch candidate profiles
         const candidateIds = Array.from(signalsByUser.keys());
-        const { data: candidateUsers, error: candidateErr } = await supabase
-          .from("users")
-          .select("id, first_name, last_name, bio, interests")
-          .in("id", candidateIds);
-
-        if (candidateErr) {
-          log.error(
-            { event: "ai_suggestions_candidate_fetch_failure", userId, candidateErr },
-            "Failed to fetch candidate users"
-          );
-          return reply
-            .status(500)
-            .send({ success: false, error: req.t("common.errors.unable_to_process") });
-        }
+        const candidateResult = await pool.query(
+          "SELECT id, first_name, last_name, bio, interests FROM users WHERE id = ANY($1)",
+          [candidateIds]
+        );
 
         // 6. Build candidate payloads + pre-rank
         type Enriched = {
@@ -232,7 +205,7 @@ export function createAiRoutes(overrides: Partial<AiRouteDeps> = {}) {
           rankScore: number;
         };
 
-        const enriched: Enriched[] = (candidateUsers ?? []).map((c) => {
+        const enriched: Enriched[] = candidateResult.rows.map((c) => {
           const interests = (c.interests as string[] | null) ?? [];
           const sharedInterests = myInterests.filter((i) => interests.includes(i));
           const sig = signalsByUser.get(c.id)!;
@@ -339,12 +312,11 @@ export function createAiRoutes(overrides: Partial<AiRouteDeps> = {}) {
             .send({ success: false, error: req.t("common.errors.invalid_parameter") });
         }
 
-        const { data: meLang } = await supabase
-          .from("users")
-          .select("language_preference")
-          .eq("id", userId)
-          .single();
-        const userLanguage = (meLang?.language_preference as string | null) ?? "en";
+        const meLangResult = await pool.query(
+          "SELECT language_preference FROM users WHERE id = $1",
+          [userId]
+        );
+        const userLanguage = (meLangResult.rows[0]?.language_preference as string | null) ?? "en";
 
         const interests = await suggestInterests(bio.trim(), userLanguage);
 

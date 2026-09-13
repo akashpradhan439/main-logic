@@ -1,4 +1,6 @@
-import { SupabaseClient } from "@supabase/supabase-js";
+import pg from "pg";
+type Pool = pg.Pool;
+type PoolClient = pg.PoolClient;
 
 export interface PrekeyBundle {
   userId:            string;
@@ -14,12 +16,10 @@ export interface PrekeyBundle {
   oneTimePrekeyId?:  number;
   pqOneTimePrekey?:  string;
   pqOneTimePrekeyId?: number;
-  remainingOtpCount:   number; // classical OPKs remaining
-  remainingPqOtpCount: number; // PQ OPKs remaining (M6)
+  remainingOtpCount:   number;
+  remainingPqOtpCount: number;
 }
 
-// An OPK may be uploaded as a bare base64 string (legacy) or with an explicit
-// client-assigned id so the bootstrap can reference exactly which key was used (H1).
 export type OneTimePrekeyInput = string | { keyId: number; publicKey: string };
 
 function normalizeOtp(input: OneTimePrekeyInput): { keyId: number | null; publicKey: string } {
@@ -28,7 +28,7 @@ function normalizeOtp(input: OneTimePrekeyInput): { keyId: number | null; public
 }
 
 export async function uploadPrekeys(
-  supabase: SupabaseClient,
+  client: Pool | PoolClient,
   userId: string,
   bundle: {
     identityKey:       string;
@@ -43,50 +43,80 @@ export async function uploadPrekeys(
   oneTimePrekeys:   OneTimePrekeyInput[],
   pqOneTimePreKeys: OneTimePrekeyInput[]
 ) {
-  const { error: prekeyError } = await supabase
-    .from("user_prekeys")
-    .upsert({
-      user_id:                 userId,
-      identity_key_public:          bundle.identityKey,
-      identity_signing_key_public:  bundle.identitySigningKey,
-      signed_prekey_public:         bundle.signedPrekey,
-      signed_prekey_id:        bundle.signedPrekeyId,
-      pq_signed_prekey_public: bundle.pqSignedPrekey,
-      pq_signed_prekey_id:     bundle.pqSignedPrekeyId,
-      signature:               bundle.signature,
-      pq_signature:            bundle.pqSignature,
-      updated_at:              new Date().toISOString(),
-    });
-
-  if (prekeyError) return { error: prekeyError };
-
-  // C2: seed the signed-prekey archive so historic SPKs are resolvable from the
-  // very first upload (not only after a rotation).
-  const { error: archiveError } = await supabase
-    .from("signed_prekeys")
-    .upsert(
+  try {
+    await client.query(
+      `INSERT INTO user_prekeys (
+        user_id, identity_key_public, identity_signing_key_public,
+        signed_prekey_public, signed_prekey_id, pq_signed_prekey_public,
+        pq_signed_prekey_id, signature, pq_signature, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      ON CONFLICT (user_id) DO UPDATE SET
+        identity_key_public = EXCLUDED.identity_key_public,
+        identity_signing_key_public = EXCLUDED.identity_signing_key_public,
+        signed_prekey_public = EXCLUDED.signed_prekey_public,
+        signed_prekey_id = EXCLUDED.signed_prekey_id,
+        pq_signed_prekey_public = EXCLUDED.pq_signed_prekey_public,
+        pq_signed_prekey_id = EXCLUDED.pq_signed_prekey_id,
+        signature = EXCLUDED.signature,
+        pq_signature = EXCLUDED.pq_signature,
+        updated_at = EXCLUDED.updated_at`,
       [
-        { user_id: userId, prekey_id: bundle.signedPrekeyId,   is_pq: false, public_key: bundle.signedPrekey,   signature: bundle.signature },
-        { user_id: userId, prekey_id: bundle.pqSignedPrekeyId, is_pq: true,  public_key: bundle.pqSignedPrekey, signature: bundle.pqSignature },
-      ],
-      { onConflict: "user_id,prekey_id,is_pq" }
+        userId,
+        bundle.identityKey,
+        bundle.identitySigningKey,
+        bundle.signedPrekey,
+        bundle.signedPrekeyId,
+        bundle.pqSignedPrekey,
+        bundle.pqSignedPrekeyId,
+        bundle.signature,
+        bundle.pqSignature,
+        new Date().toISOString(),
+      ]
     );
-  if (archiveError) return { error: archiveError };
 
-  const allOTPs = [
-    ...oneTimePrekeys.map((k) => {
-      const { keyId, publicKey } = normalizeOtp(k);
-      return { user_id: userId, key_public: publicKey, prekey_id: keyId, is_pq: false };
-    }),
-    ...pqOneTimePreKeys.map((k) => {
-      const { keyId, publicKey } = normalizeOtp(k);
-      return { user_id: userId, key_public: publicKey, prekey_id: keyId, is_pq: true };
-    }),
-  ];
+    // C2: seed the signed-prekey archive
+    const archiveValues = [
+      { user_id: userId, prekey_id: bundle.signedPrekeyId,   is_pq: false, public_key: bundle.signedPrekey,   signature: bundle.signature },
+      { user_id: userId, prekey_id: bundle.pqSignedPrekeyId, is_pq: true,  public_key: bundle.pqSignedPrekey, signature: bundle.pqSignature },
+    ];
 
-  if (allOTPs.length > 0) {
-    const { error: otpError } = await supabase.from("one_time_prekeys").insert(allOTPs);
-    if (otpError) return { error: otpError };
+    for (const row of archiveValues) {
+      await client.query(
+        `INSERT INTO signed_prekeys (user_id, prekey_id, is_pq, public_key, signature)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (user_id, prekey_id, is_pq) DO UPDATE SET
+           public_key = EXCLUDED.public_key,
+           signature = EXCLUDED.signature`,
+        [row.user_id, row.prekey_id, row.is_pq, row.public_key, row.signature]
+      );
+    }
+
+    const allOTPs = [
+      ...oneTimePrekeys.map((k) => {
+        const { keyId, publicKey } = normalizeOtp(k);
+        return { user_id: userId, key_public: publicKey, prekey_id: keyId, is_pq: false };
+      }),
+      ...pqOneTimePreKeys.map((k) => {
+        const { keyId, publicKey } = normalizeOtp(k);
+        return { user_id: userId, key_public: publicKey, prekey_id: keyId, is_pq: true };
+      }),
+    ];
+
+    if (allOTPs.length > 0) {
+      const params: any[] = [];
+      const valueClauses: string[] = [];
+      allOTPs.forEach((otp, i) => {
+        const base = i * 4;
+        valueClauses.push(`($${base + 1},$${base + 2},$${base + 3},$${base + 4})`);
+        params.push(otp.user_id, otp.key_public, otp.prekey_id, otp.is_pq);
+      });
+      await client.query(
+        `INSERT INTO one_time_prekeys (user_id, key_public, prekey_id, is_pq) VALUES ${valueClauses.join(",")}`,
+        params
+      );
+    }
+  } catch (error) {
+    return { error };
   }
 
   return { error: null };
@@ -99,142 +129,142 @@ interface ConsumedOpk {
   prekey_id: number | null;
 }
 
-// M5: atomically consume one classical and one PQ OPK in a single RPC.
 async function consumePrekeysAtomic(
-  supabase: SupabaseClient,
+  client: Pool | PoolClient,
   userId: string
 ): Promise<{ classical: ConsumedOpk | null; pq: ConsumedOpk | null }> {
-  const { data, error } = await (supabase as any).rpc("consume_prekeys_atomic", {
-    p_user_id: userId,
-  });
-  if (error || !Array.isArray(data)) return { classical: null, pq: null };
-  const rows = data as ConsumedOpk[];
-  return {
-    classical: rows.find((r) => r.is_pq === false) ?? null,
-    pq:        rows.find((r) => r.is_pq === true) ?? null,
-  };
+  try {
+    const { rows } = await client.query("SELECT * FROM consume_prekeys_atomic($1)", [userId]);
+    if (!Array.isArray(rows) || rows.length === 0) return { classical: null, pq: null };
+    return {
+      classical: rows.find((r: ConsumedOpk) => r.is_pq === false) ?? null,
+      pq:        rows.find((r: ConsumedOpk) => r.is_pq === true) ?? null,
+    };
+  } catch {
+    return { classical: null, pq: null };
+  }
 }
 
-/** Resolve a historic signed prekey by id (C2) — e.g. the one named in a bootstrap. */
 export async function getSignedPrekeyById(
-  supabase: SupabaseClient,
+  client: Pool | PoolClient,
   userId: string,
   prekeyId: number,
   isPq: boolean
 ): Promise<{ publicKey: string; signature: string } | null> {
-  const { data, error } = await supabase
-    .from("signed_prekeys")
-    .select("public_key, signature")
-    .eq("user_id", userId)
-    .eq("is_pq", isPq)
-    .eq("prekey_id", prekeyId)
-    .maybeSingle();
-  if (error || !data) return null;
-  return { publicKey: (data as any).public_key, signature: (data as any).signature };
+  try {
+    const { rows } = await client.query(
+      "SELECT public_key, signature FROM signed_prekeys WHERE user_id = $1 AND is_pq = $2 AND prekey_id = $3",
+      [userId, isPq, prekeyId]
+    );
+    if (rows.length === 0) return null;
+    return { publicKey: rows[0].public_key, signature: rows[0].signature };
+  } catch {
+    return null;
+  }
 }
 
-/** Rotate (and archive) a signed prekey via the atomic SQL function (C2/H5). */
 export async function rotateSignedPrekey(
-  supabase: SupabaseClient,
+  client: Pool | PoolClient,
   userId: string,
   params: { prekeyId: number; publicKey: string; signature: string; isPq: boolean }
 ): Promise<{ error: any }> {
-  const { error } = await (supabase as any).rpc("rotate_signed_prekey", {
-    p_user_id:    userId,
-    p_is_pq:      params.isPq,
-    p_prekey_id:  params.prekeyId,
-    p_public_key: params.publicKey,
-    p_signature:  params.signature,
-  });
-  return { error };
+  try {
+    await client.query(
+      "SELECT * FROM rotate_signed_prekey($1, $2, $3, $4, $5)",
+      [userId, params.isPq, params.prekeyId, params.publicKey, params.signature]
+    );
+    return { error: null };
+  } catch (error) {
+    return { error };
+  }
 }
 
-/** Returns the OPK pool counts for a user. */
 export async function getOpkStatus(
-  supabase: SupabaseClient,
+  client: Pool | PoolClient,
   userId: string
 ): Promise<{ classical: number; pq: number; error: any }> {
-  const [{ count: classical }, { count: pq }] = await Promise.all([
-    supabase
-      .from("one_time_prekeys")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .eq("is_pq", false)
-      .is("used_at", null),
-    supabase
-      .from("one_time_prekeys")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .eq("is_pq", true)
-      .is("used_at", null),
-  ]);
-  return { classical: classical ?? 0, pq: pq ?? 0, error: null };
+  try {
+    const [classicalRes, pqRes] = await Promise.all([
+      client.query(
+        "SELECT COUNT(*)::int as count FROM one_time_prekeys WHERE user_id = $1 AND is_pq = false AND used_at IS NULL",
+        [userId]
+      ),
+      client.query(
+        "SELECT COUNT(*)::int as count FROM one_time_prekeys WHERE user_id = $1 AND is_pq = true AND used_at IS NULL",
+        [userId]
+      ),
+    ]);
+    return {
+      classical: classicalRes.rows[0]?.count ?? 0,
+      pq: pqRes.rows[0]?.count ?? 0,
+      error: null,
+    };
+  } catch (error) {
+    return { classical: 0, pq: 0, error };
+  }
 }
 
-/**
- * Returns the subset of the given user IDs that have a USABLE prekey bundle
- * (identity key present and a non-sentinel pq_signature). Lets the messaging API
- * report `signalReady` so clients can gate sends instead of attempting and failing
- * when the peer hasn't uploaded keys yet (#12).
- */
 export async function usersWithUsableBundles(
-  supabase: SupabaseClient,
+  client: Pool | PoolClient,
   userIds: string[]
 ): Promise<Set<string>> {
   const ready = new Set<string>();
   if (userIds.length === 0) return ready;
 
-  const { data, error } = await supabase
-    .from("user_prekeys")
-    .select("user_id, identity_key_public, pq_signature")
-    .in("user_id", userIds);
-
-  if (error || !data) return ready;
-  for (const row of data as Array<{ user_id: string; identity_key_public: string | null; pq_signature: string | null }>) {
-    if (row.identity_key_public && row.pq_signature && row.pq_signature !== "") {
-      ready.add(row.user_id);
+  try {
+    const { rows } = await client.query(
+      "SELECT user_id, identity_key_public, pq_signature FROM user_prekeys WHERE user_id = ANY($1)",
+      [userIds]
+    );
+    for (const row of rows) {
+      if (row.identity_key_public && row.pq_signature && row.pq_signature !== "") {
+        ready.add(row.user_id);
+      }
     }
+  } catch {
+    // return empty set on error
   }
   return ready;
 }
 
 export async function getPrekeyBundle(
-  supabase: SupabaseClient,
+  client: Pool | PoolClient,
   userId: string
 ): Promise<{ bundle: PrekeyBundle | null; error: any; opkPoolLow: boolean }> {
-  const { data: userPrekeys, error: prekeyError } = await supabase
-    .from("user_prekeys")
-    .select("*")
-    .eq("user_id", userId)
-    .single();
-
-  if (prekeyError || !userPrekeys) {
-    return { bundle: null, error: prekeyError || new Error("Prekeys not found"), opkPoolLow: false };
+  let userPrekeys: any;
+  try {
+    const { rows } = await client.query(
+      "SELECT * FROM user_prekeys WHERE user_id = $1",
+      [userId]
+    );
+    userPrekeys = rows[0];
+  } catch (error) {
+    return { bundle: null, error, opkPoolLow: false };
   }
 
-  // M7: a legacy sentinel pq_signature means the bundle is unusable; surface a
-  // clear error so the caller gets a "re-upload needed" signal rather than a
-  // bundle that crashes the initiator's signature verification.
+  if (!userPrekeys) {
+    return { bundle: null, error: new Error("Prekeys not found"), opkPoolLow: false };
+  }
+
   if (!userPrekeys.pq_signature || userPrekeys.pq_signature === "") {
     return { bundle: null, error: new Error("PREKEY_BUNDLE_STALE: user must re-upload prekeys"), opkPoolLow: false };
   }
 
-  const { classical: opk, pq: pqOpk } = await consumePrekeysAtomic(supabase, userId);
+  const { classical: opk, pq: pqOpk } = await consumePrekeysAtomic(client, userId);
 
-  const [{ count: remainingOtpCount }, { count: remainingPqOtpCount }] = await Promise.all([
-    supabase
-      .from("one_time_prekeys")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .eq("is_pq", false)
-      .is("used_at", null),
-    supabase
-      .from("one_time_prekeys")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .eq("is_pq", true)
-      .is("used_at", null),
+  const [classicalRes, pqRes] = await Promise.all([
+    client.query(
+      "SELECT COUNT(*)::int as count FROM one_time_prekeys WHERE user_id = $1 AND is_pq = false AND used_at IS NULL",
+      [userId]
+    ),
+    client.query(
+      "SELECT COUNT(*)::int as count FROM one_time_prekeys WHERE user_id = $1 AND is_pq = true AND used_at IS NULL",
+      [userId]
+    ),
   ]);
+
+  const remainingOtpCount = classicalRes.rows[0]?.count ?? 0;
+  const remainingPqOtpCount = pqRes.rows[0]?.count ?? 0;
 
   return {
     bundle: {
@@ -249,10 +279,10 @@ export async function getPrekeyBundle(
       pqSignature:        userPrekeys.pq_signature,
       ...(opk   ? { oneTimePrekey:   opk.key_public,   ...(opk.prekey_id != null   ? { oneTimePrekeyId:   opk.prekey_id }   : {}) } : {}),
       ...(pqOpk ? { pqOneTimePrekey: pqOpk.key_public, ...(pqOpk.prekey_id != null ? { pqOneTimePrekeyId: pqOpk.prekey_id } : {}) } : {}),
-      remainingOtpCount:   remainingOtpCount ?? 0,
-      remainingPqOtpCount: remainingPqOtpCount ?? 0,
+      remainingOtpCount,
+      remainingPqOtpCount,
     },
     error: null,
-    opkPoolLow: (remainingOtpCount ?? 0) < 5 || (remainingPqOtpCount ?? 0) < 5,
+    opkPoolLow: remainingOtpCount < 5 || remainingPqOtpCount < 5,
   };
 }

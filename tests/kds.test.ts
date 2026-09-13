@@ -1,6 +1,3 @@
-process.env.SUPABASE_URL = "https://mock.supabase.co";
-process.env.SUPABASE_SERVICE_ROLE_KEY = "mock-key";
-
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import Fastify from "fastify";
@@ -45,18 +42,18 @@ class AuthError extends Error {
 }
 
 const deps: Partial<KeysRouteDeps> = {
-  supabase: {} as any,
+  pool: {} as any,
   verifyAccessToken: (auth: string | undefined) => {
     if (auth === "Bearer test") return { sub: scenario.authUserId } as any;
     throw new AuthError("Auth required");
   },
-  uploadPrekeys: async (supabase: any, userId: string, bundle: any, oneTimePrekeys: any[]) => {
+  uploadPrekeys: async (pool: any, userId: string, bundle: any, oneTimePrekeys: any[]) => {
     scenario.userId = userId;
     scenario.prekeys = bundle;
     scenario.oneTimePrekeys.push(...oneTimePrekeys);
     return { error: null };
   },
-  getPrekeyBundle: async (supabase: any, userId: string) => {
+  getPrekeyBundle: async (pool: any, userId: string) => {
     if (userId !== scenario.userId && userId !== scenario.otherUserId) {
       return { bundle: null, error: new Error("Not found"), opkPoolLow: false };
     }

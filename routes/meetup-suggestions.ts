@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import { supabase } from "../lib/supabase.js";
+import pg from "pg";
+import { pool } from "../lib/db.js";
 import { verifyAccessToken, AuthError } from "../shared/auth.js";
 import { redisGet, redisSet } from "../lib/redis.js";
 import { cellToLatLngSafe } from "../shared/h3.js";
@@ -69,7 +70,7 @@ const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 export type MeetupSuggestionsRouteDeps = {
-  supabase: typeof supabase;
+  pool: pg.Pool;
   verifyAccessToken: typeof verifyAccessToken;
   AuthError: typeof AuthError;
   redisGet: typeof redisGet;
@@ -81,7 +82,7 @@ export function createMeetupSuggestionsRoutes(
   overrides: Partial<MeetupSuggestionsRouteDeps> = {}
 ) {
   const deps: MeetupSuggestionsRouteDeps = {
-    supabase,
+    pool,
     verifyAccessToken,
     AuthError,
     redisGet,
@@ -91,7 +92,7 @@ export function createMeetupSuggestionsRoutes(
   };
 
   return async function meetupSuggestionsRoutes(app: FastifyInstance) {
-    const { supabase, verifyAccessToken, AuthError, redisGet, redisSet, fetchImpl } = deps;
+    const { pool, verifyAccessToken, AuthError, redisGet, redisSet, fetchImpl } = deps;
 
     // ─── Internal: Context endpoint called by n8n ───────────────────────────
 
@@ -111,15 +112,15 @@ export function createMeetupSuggestionsRoutes(
           throw err;
         }
 
-        const { data: me, error: meErr } = await supabase
-          .from("users")
-          .select("first_name, bio, interests, h3_cell, language_preference")
-          .eq("id", userId)
-          .single();
+        const meResult = await pool.query(
+          "SELECT first_name, bio, interests, h3_cell, language_preference FROM users WHERE id = $1",
+          [userId]
+        );
+        const me = meResult.rows[0];
 
-        if (meErr || !me) {
+        if (!me) {
           log.error(
-            { event: "meetup_suggestions_me_fetch_failure", userId, meErr },
+            { event: "meetup_suggestions_me_fetch_failure", userId },
             "Failed to fetch user"
           );
           return reply
@@ -136,24 +137,14 @@ export function createMeetupSuggestionsRoutes(
           return reply.status(400).send({ success: false, error: "location_invalid" });
         }
 
-        const { data: connRows, error: connErr } = await supabase
-          .from("connections")
-          .select("requester_id, addressee_id, status")
-          .or(`requester_id.eq.${userId},addressee_id.eq.${userId}`)
-          .eq("status", "accepted");
-
-        if (connErr) {
-          log.error(
-            { event: "meetup_suggestions_conn_fetch_failure", userId, connErr },
-            "Failed to fetch connections"
-          );
-          return reply
-            .status(500)
-            .send({ success: false, error: req.t("common.errors.unable_to_process") });
-        }
+        const connResult = await pool.query(
+          "SELECT requester_id, addressee_id, status FROM connections WHERE (requester_id = $1 OR addressee_id = $1) AND status = 'accepted'",
+          [userId]
+        );
+        const connRows = connResult.rows;
 
         const partnerIds: string[] = [];
-        for (const row of connRows ?? []) {
+        for (const row of connRows) {
           const partner =
             row.requester_id === userId ? row.addressee_id : row.requester_id;
           if (typeof partner === "string" && partner.length > 0) {
@@ -163,21 +154,13 @@ export function createMeetupSuggestionsRoutes(
 
         let connections: ConnectionContext[] = [];
         if (partnerIds.length > 0) {
-          const { data: partnerProfiles, error: pErr } = await supabase
-            .from("users")
-            .select("id, first_name, last_name, bio, interests, h3_cell")
-            .in("id", partnerIds);
-          if (pErr) {
-            log.error(
-              { event: "meetup_suggestions_partners_fetch_failure", userId, pErr },
-              "Failed to fetch partner profiles"
-            );
-            return reply
-              .status(500)
-              .send({ success: false, error: req.t("common.errors.unable_to_process") });
-          }
+          const partnerResult = await pool.query(
+            "SELECT id, first_name, last_name, bio, interests, h3_cell FROM users WHERE id = ANY($1)",
+            [partnerIds]
+          );
+          const partnerProfiles = partnerResult.rows;
           const myInterestSet = new Set((me.interests as string[] | null) ?? []);
-          const scored = (partnerProfiles ?? []).map((p) => {
+          const scored = partnerProfiles.map((p) => {
             const cInterests = (p.interests as string[] | null) ?? [];
             const cBio = (p.bio as string | null) ?? null;
             const cH3 = (p.h3_cell as string | null) ?? null;
@@ -271,14 +254,14 @@ export function createMeetupSuggestionsRoutes(
           throw err;
         }
 
-        const { data: user, error: userErr } = await supabase
-          .from("users")
-          .select("h3_cell")
-          .eq("id", userId)
-          .single();
-        if (userErr || !user) {
+        const userResult = await pool.query(
+          "SELECT h3_cell FROM users WHERE id = $1",
+          [userId]
+        );
+        const user = userResult.rows[0];
+        if (!user) {
           log.error(
-            { event: "meetup_suggestions_user_fetch_failure", userId, userErr },
+            { event: "meetup_suggestions_user_fetch_failure", userId },
             "Failed to fetch user"
           );
           return reply

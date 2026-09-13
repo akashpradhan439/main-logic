@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { supabase } from "../lib/supabase.js";
+import pg from "pg";
+import { pool } from "../lib/db.js";
 import { verifyAccessToken, AuthError } from "../shared/auth.js";
 
 export const SUPPORTED_LANGUAGES = [
@@ -34,21 +35,21 @@ const UpdateLanguageSchema = z
   .strict();
 
 export type ProfileRouteDeps = {
-  supabase: typeof supabase;
+  pool: pg.Pool;
   verifyAccessToken: typeof verifyAccessToken;
   AuthError: typeof AuthError;
 };
 
 export function createProfileRoutes(overrides: Partial<ProfileRouteDeps> = {}) {
   const deps: ProfileRouteDeps = {
-    supabase,
+    pool,
     verifyAccessToken,
     AuthError,
     ...overrides,
   };
 
   return async function profileRoutes(app: FastifyInstance) {
-    const { supabase, verifyAccessToken, AuthError } = deps;
+    const { pool, verifyAccessToken, AuthError } = deps;
 
     app.get("/profile", async (req, reply) => {
       const log = req.log;
@@ -66,18 +67,19 @@ export function createProfileRoutes(overrides: Partial<ProfileRouteDeps> = {}) {
           throw err;
         }
 
-        const { data, error } = await supabase
-          .from("users")
-          .select("id, first_name, last_name, bio, interests")
-          .eq("id", userId)
-          .single();
+        const { rows } = await pool.query(
+          "SELECT id, first_name, last_name, bio, interests FROM users WHERE id = $1",
+          [userId]
+        );
 
-        if (error) {
-          log.error({ event: "profile_fetch_failure", userId, error }, "Failed to fetch profile");
+        if (rows.length === 0) {
+          log.error({ event: "profile_fetch_failure", userId }, "User not found");
           return reply
             .status(500)
             .send({ success: false, error: req.t("common.errors.unable_to_process") });
         }
+
+        const data = rows[0];
 
         return reply.status(200).send({
           success: true,
@@ -132,19 +134,22 @@ export function createProfileRoutes(overrides: Partial<ProfileRouteDeps> = {}) {
             .send({ success: false, error: req.t("common.errors.invalid_parameter") });
         }
 
-        const { data, error } = await supabase
-          .from("users")
-          .update(updates)
-          .eq("id", userId)
-          .select("bio, interests")
-          .single();
+        const bio = updates.bio !== undefined ? updates.bio : null;
+        const interests = updates.interests !== undefined ? JSON.stringify(updates.interests) : null;
 
-        if (error) {
-          log.error({ event: "profile_update_failure", userId, error }, "Failed to update profile");
+        const { rows } = await pool.query(
+          "UPDATE users SET bio = $1, interests = $2 WHERE id = $3 RETURNING bio, interests",
+          [bio, interests, userId]
+        );
+
+        if (rows.length === 0) {
+          log.error({ event: "profile_update_failure", userId }, "Failed to update profile");
           return reply
             .status(500)
             .send({ success: false, error: req.t("common.errors.unable_to_process") });
         }
+
+        const data = rows[0];
 
         log.info({ event: "profile_updated", userId }, "Profile updated");
         return reply.status(200).send({
@@ -187,22 +192,22 @@ export function createProfileRoutes(overrides: Partial<ProfileRouteDeps> = {}) {
           });
         }
 
-        const { data, error } = await supabase
-          .from("users")
-          .update({ language_preference: parsed.data.language_preference })
-          .eq("id", userId)
-          .select("language_preference")
-          .single();
+        const { rows } = await pool.query(
+          "UPDATE users SET language_preference = $1 WHERE id = $2 RETURNING language_preference",
+          [parsed.data.language_preference, userId]
+        );
 
-        if (error) {
+        if (rows.length === 0) {
           log.error(
-            { event: "language_update_failure", userId, error },
+            { event: "language_update_failure", userId },
             "Failed to update language preference"
           );
           return reply
             .status(500)
             .send({ success: false, error: req.t("common.errors.unable_to_process") });
         }
+
+        const data = rows[0];
 
         log.info(
           { event: "language_updated", userId, language: data.language_preference },

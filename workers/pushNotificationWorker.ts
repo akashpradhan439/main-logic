@@ -2,8 +2,9 @@ import "dotenv/config";
 import apn from "apn";
 import amqp from "amqplib";
 import pino from "pino";
+import pg from "pg";
 import { config } from "../config.js";
-import { supabase } from "../lib/supabase.js";
+import { pool } from "../lib/db.js";
 import type { HexOverlapNotificationEvent } from "../lib/rabbitmq.js";
 import { createWorkerMetrics } from "../lib/workerMetrics.js";
 
@@ -49,16 +50,11 @@ function getApnProvider(): apn.Provider | null {
 }
 
 async function getDeviceToken(userId: string): Promise<string | null> {
-  const { data, error } = await supabase
-    .from("users")
-    .select("device_token")
-    .eq("id", userId)
-    .single();
-
-  if (error || !data?.device_token) {
+  const { rows } = await pool.query("SELECT device_token FROM users WHERE id = $1", [userId]);
+  if (rows.length === 0 || !rows[0].device_token) {
     return null;
   }
-  return data.device_token as string;
+  return rows[0].device_token as string;
 }
 
 function buildHexOverlapAlert(recipientUserId: string, otherUserId: string): string {

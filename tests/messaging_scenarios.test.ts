@@ -10,10 +10,6 @@
 // routes/sse.ts), the REAL lib/keys.getPrekeyBundle, and the REAL in-process SSE
 // manager. Only the database is faked.
 
-process.env.SUPABASE_URL = process.env.SUPABASE_URL || "http://localhost";
-process.env.SUPABASE_SERVICE_ROLE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY || "test-key";
-
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -146,7 +142,7 @@ async function buildApp(senderId: string, recipientId: string) {
   await app.register(createSseRoutes({
     verifyAccessToken: (h) => ({ sub: tokenToUser(h), phone: "", type: "access" as const, iat: 0, exp: 0 }),
     AuthError,
-    supabase: {} as any,
+    pool: {} as any,
     // Real generator semantics: yield messages strictly after the cursor, ASC.
     getMessagesSinceCursor: async function* (_sb, userId, cursor) {
       const pending = store
@@ -156,40 +152,23 @@ async function buildApp(senderId: string, recipientId: string) {
     },
   }));
 
-  // Minimal supabase stub: only the user_prekeys lookup the C4 sender-identity
+  // Minimal pg pool stub: only the user_prekeys lookup the C4 sender-identity
   // check performs when a bootstrap is present, and the messages table for dedup.
-  const supabaseStub = {
-    from(table: string) {
-      if (table === "user_prekeys") {
-        return {
-          select: () => ({
-            eq: () => ({
-              async maybeSingle() {
-                return { data: { identity_key_public: SENDER_IK_B64 }, error: null };
-              },
-            }),
-          }),
-        };
+  const poolStub = {
+    async query(sql: string, params?: unknown[]) {
+      const sqlLower = sql.toLowerCase();
+      if (sqlLower.includes("from user_prekeys") && sqlLower.includes("identity_key_public")) {
+        return { rows: [{ identity_key_public: SENDER_IK_B64 }] };
       }
-      if (table === "messages") {
-        return {
-          select: () => ({
-            eq: () => ({
-              eq: () => ({
-                limit: () => ({
-                  maybeSingle: async () => ({ data: null, error: null }),
-                }),
-              }),
-            }),
-          }),
-        };
+      if (sqlLower.includes("from messages") && sqlLower.includes("dedup")) {
+        return { rows: [] };
       }
-      throw new Error(`unexpected table ${table}`);
+      return { rows: [] };
     },
   } as any;
 
   await app.register(createMessagingRoutes({
-    supabase: supabaseStub,
+    pool: poolStub,
     verifyAccessToken: (h) => ({ sub: tokenToUser(h), phone: "", type: "access" as const, iat: 0, exp: 0 }),
     AuthError,
     findConnectionBetweenUsers: async () => ({ row: null, error: null }),
@@ -297,31 +276,32 @@ test("Scenario 1: A fetches B's bundle before B has uploaded -> not found", asyn
 test("Scenario 2: stale bundle (pq_signature sentinel) -> re-upload signal", async () => {
   const { getPrekeyBundle } = await import("../lib/keys.js");
 
-  const fakeSupabase = {
-    from() {
-      return {
-        select: () => ({
-          eq: () => ({
-            single: async () => ({
-              data: {
-                identity_key_public: "ik",
-                identity_signing_key_public: "isk",
-                signed_prekey_public: "spk",
-                signed_prekey_id: 1,
-                pq_signed_prekey_public: "pqspk",
-                pq_signed_prekey_id: 1,
-                signature: "sig",
-                pq_signature: "", // legacy sentinel
-              },
-              error: null,
-            }),
-          }),
-        }),
-      };
+  const fakePool = {
+    async query(sql: string, params?: unknown[]) {
+      const sqlLower = sql.toLowerCase();
+      if (sqlLower.includes("from user_prekeys") && sqlLower.includes("where user_id")) {
+        return { rows: [{
+          identity_key_public: "ik",
+          identity_signing_key_public: "isk",
+          signed_prekey_public: "spk",
+          signed_prekey_id: 1,
+          pq_signed_prekey_public: "pqspk",
+          pq_signed_prekey_id: 1,
+          signature: "sig",
+          pq_signature: "", // legacy sentinel
+        }] };
+      }
+      if (sqlLower.includes("consume_prekeys_atomic")) {
+        return { rows: [] };
+      }
+      if (sqlLower.includes("one_time_prekeys")) {
+        return { rows: [{ count: 0 }] };
+      }
+      return { rows: [] };
     },
   } as any;
 
-  const { bundle, error } = await getPrekeyBundle(fakeSupabase, randomUUID());
+  const { bundle, error } = await getPrekeyBundle(fakePool, randomUUID());
   assert.equal(bundle, null);
   assert.ok(error instanceof Error && error.message.startsWith("PREKEY_BUNDLE_STALE"));
 });
@@ -482,117 +462,50 @@ test("Bug1: insertMessage records first sender as canonical initiator (set-once 
   const userB = randomUUID();
   const conversationId = randomUUID();
 
-  // Minimal in-memory Supabase fake for the conversations + messages tables.
-  const convRow: { id: string; initiator_user_id: string | null; updated_at: string | null } = {
-    id: conversationId,
-    initiator_user_id: null,
-    updated_at: null,
-  };
+  let initiatorUserIdInDb: string | null = null;
 
-  const fakeSupabase = {
-    from(table: string) {
-      if (table === "messages") {
-        return {
-          insert(values: any) {
-            return {
-              select() {
-                return {
-                  async single() {
-                    return {
-                      data: {
-                        id: randomUUID(),
-                        conversation_id: values.conversation_id,
-                        sender_id: values.sender_id,
-                        envelope: values.envelope,
-                        attachment_url: values.attachment_url ?? null,
-                        attachment_type: values.attachment_type ?? null,
-                        created_at: new Date().toISOString(),
-                        bootstrap_json: values.bootstrap_json ?? null,
-                      },
-                      error: null,
-                    };
-                  },
-                };
-              },
-            };
-          },
-          select(_cols: string) {
-            return {
-              eq(_col: string, _val: any) {
-                return {
-                  eq(_col2: string, _val2: any) {
-                    return {
-                      limit(_n: number) {
-                        return {
-                          maybeSingle: async () => ({ data: null, error: null }),
-                        };
-                      },
-                    };
-                  },
-                };
-              },
-            };
-          },
-        };
+  const fakePool = {
+    async query(sql: string, params?: unknown[]) {
+      const sqlLower = sql.toLowerCase();
+      if (sqlLower.includes("select id from messages") && sqlLower.includes("envelope")) {
+        return { rows: [] };
       }
-      if (table === "conversations") {
-        return {
-          update(patch: any) {
-            return {
-              eq(_col: string, _val: any) {
-                // `.is(...).select(...)` => set-once guarded update with RETURNING.
-                // `.then(...)` => unguarded update (updated_at bump).
-                return {
-                  is(_col: string, _val: null) {
-                    if (convRow.initiator_user_id === null && patch.initiator_user_id !== undefined) {
-                      convRow.initiator_user_id = patch.initiator_user_id;
-                    }
-                    return {
-                      select(_cols: string) {
-                        return {
-                          maybeSingle: async () => ({
-                            data: { initiator_user_id: convRow.initiator_user_id },
-                            error: null,
-                          }),
-                        };
-                      },
-                    };
-                  },
-                  then(resolve: (v: { error: null }) => void) {
-                    if (patch.updated_at !== undefined) convRow.updated_at = patch.updated_at;
-                    resolve({ error: null });
-                  },
-                };
-              },
-            };
-          },
-          select() {
-            return {
-              eq() {
-                return {
-                  async maybeSingle() {
-                    return { data: { initiator_user_id: convRow.initiator_user_id }, error: null };
-                  },
-                };
-              },
-            };
-          },
-        };
+      if (sqlLower.includes("insert into messages")) {
+        return { rows: [{
+          id: randomUUID(),
+          conversation_id: params?.[0],
+          sender_id: params?.[1],
+          envelope: params?.[2],
+          attachment_url: params?.[3] ?? null,
+          attachment_type: params?.[4] ?? null,
+          created_at: new Date().toISOString(),
+          bootstrap_json: params?.[5] ?? null,
+        }] };
       }
-      throw new Error(`unexpected table ${table}`);
+      if (sqlLower.includes("update conversations")) {
+        if (initiatorUserIdInDb === null && sqlLower.includes("initiator_user_id is null")) {
+          initiatorUserIdInDb = params?.[0] as string;
+          return { rows: [{ initiator_user_id: initiatorUserIdInDb }] };
+        }
+        return { rows: [] };
+      }
+      if (sqlLower.includes("select initiator_user_id from conversations")) {
+        return { rows: [{ initiator_user_id: initiatorUserIdInDb }] };
+      }
+      return { rows: [] };
     },
   } as any;
 
   const env = { header: { dhPublicKey: new Uint8Array([1, 2, 3]), n: 0, pn: 0 }, ciphertext: new Uint8Array([4, 5, 6]) };
 
   // A sends first → becomes the canonical initiator.
-  const r1 = await insertMessage(fakeSupabase, conversationId, userA, env as any, null, null, null, noopLog);
+  const r1 = await insertMessage(fakePool, conversationId, userA, env as any, null, null, null, noopLog);
   assert.equal(r1.initiatorUserId, userA);
 
   // B sends later → must NOT overwrite the initiator; both see A.
-  const r2 = await insertMessage(fakeSupabase, conversationId, userB, env as any, null, null, null, noopLog);
+  const r2 = await insertMessage(fakePool, conversationId, userB, env as any, null, null, null, noopLog);
   assert.equal(r2.initiatorUserId, userA, "second sender must not steal the initiator role");
-  assert.equal(convRow.initiator_user_id, userA);
+  assert.equal(initiatorUserIdInDb, userA);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -650,47 +563,21 @@ test("Bug2: getConversationBootstrap picks the EARLIEST bootstrap-bearing messag
 
   let capturedAscending: boolean | undefined;
   let capturedNotNull = false;
-  const fakeSupabase = {
-    from(table: string) {
-      assert.equal(table, "messages");
-      return {
-        select() {
-          return {
-            eq() {
-              return {
-                not(_col: string, _op: string, _val: null) {
-                  capturedNotNull = true;
-                  return {
-                    order(_col2: string, opts: { ascending: boolean }) {
-                      capturedAscending = opts.ascending;
-                      return {
-                        limit() {
-                          return {
-                            async maybeSingle() {
-                              return {
-                                data: {
-                                  sender_id: "user-A",
-                                  bootstrap_json: { senderIdentityKey: "ik", senderEphemeralKey: "ek", pqCiphertext: "ct", signedPrekeyId: 1, pqSignedPrekeyId: 1 },
-                                  created_at: "2026-01-01T00:00:00.000Z",
-                                },
-                                error: null,
-                              };
-                            },
-                          };
-                        },
-                      };
-                    },
-                  };
-                },
-              };
-            },
-          };
-        },
-      };
+  const fakePool = {
+    async query(sql: string, params?: unknown[]) {
+      const sqlLower = sql.toLowerCase();
+      if (sqlLower.includes("from messages") && sqlLower.includes("bootstrap_json is not null")) {
+        capturedNotNull = true;
+        if (sqlLower.includes("order by created_at asc")) {
+          capturedAscending = true;
+        }
+        return { rows: [{ sender_id: "user-A", bootstrap_json: { senderIdentityKey: "ik", senderEphemeralKey: "ek", pqCiphertext: "ct", signedPrekeyId: 1, pqSignedPrekeyId: 1 }, created_at: "2026-01-01T00:00:00.000Z" }] };
+      }
+      return { rows: [] };
     },
   } as any;
 
-  const { bootstrap, senderId, error } = await getConversationBootstrap(fakeSupabase, randomUUID());
+  const { bootstrap, senderId, error } = await getConversationBootstrap(fakePool, randomUUID());
   assert.equal(error, null);
   assert.equal(senderId, "user-A");
   assert.equal((bootstrap as any).senderIdentityKey, "ik");
@@ -715,32 +602,24 @@ test("#6: getMessagesSinceCursor keyset-paginates without skips or duplicates", 
     { id: "m5", conversation_id: "c1", sender_id: "s", envelope: Buffer.from("e").toString("base64"), attachment_url: null, attachment_type: null, created_at: "2026-01-01T00:00:05.000Z", bootstrap_json: null },
   ];
 
-  const fakeSupabase = {
-    from(table: string) {
-      if (table === "conversations") {
-        return { select: () => ({ or: async () => ({ data: [{ id: "c1" }], error: null }) }) };
+  const fakePool = {
+    async query(sql: string, params?: unknown[]) {
+      const sqlLower = sql.toLowerCase();
+      if (sqlLower.includes("from conversations")) {
+        return { rows: [{ id: "c1", initiator_user_id: null }] };
       }
-      // messages: builder capturing the gt() bound, resolving on limit().
-      let gtVal = "";
-      const builder: any = {
-        select: () => builder,
-        in: () => builder,
-        gt: (_c: string, v: string) => { gtVal = v; return builder; },
-        order: () => builder,
-        limit: (n: number) => Promise.resolve({
-          data: all.filter((m) => m.created_at > gtVal)
-                   .sort((a, b) => a.created_at.localeCompare(b.created_at))
-                   .slice(0, n),
-          error: null,
-        }),
-      };
-      return builder;
+      if (sqlLower.includes("from messages")) {
+        const cursor = params?.[1] as string || "";
+        const limit = params?.[2] as number || 50;
+        return { rows: all.filter((m) => m.created_at > cursor).sort((a, b) => a.created_at.localeCompare(b.created_at)).slice(0, limit) };
+      }
+      return { rows: [] };
     },
   } as any;
 
   const seen: string[] = [];
   // batchSize 2 → forces 3 batches over 5 rows.
-  for await (const batch of getMessagesSinceCursor(fakeSupabase, randomUUID(), "2026-01-01T00:00:00.000Z", 2)) {
+  for await (const batch of getMessagesSinceCursor(fakePool, randomUUID(), "2026-01-01T00:00:00.000Z", 2)) {
     for (const m of batch) seen.push(m.id);
   }
 
@@ -763,21 +642,18 @@ test("#12: usersWithUsableBundles excludes missing keys and sentinel pq_signatur
     // "missing" is absent entirely from user_prekeys
   ];
 
-  const fakeSupabase = {
-    from(table: string) {
-      assert.equal(table, "user_prekeys");
-      return {
-        select: () => ({
-          in: async (_col: string, ids: string[]) => ({
-            data: rows.filter((r) => ids.includes(r.user_id)),
-            error: null,
-          }),
-        }),
-      };
+  const fakePool = {
+    async query(sql: string, params?: unknown[]) {
+      const sqlLower = sql.toLowerCase();
+      if (sqlLower.includes("from user_prekeys")) {
+        const ids = params?.[0] as string[] || [];
+        return { rows: rows.filter((r) => ids.includes(r.user_id)) };
+      }
+      return { rows: [] };
     },
   } as any;
 
-  const ready = await usersWithUsableBundles(fakeSupabase, ["ready", "stale", "noident", "missing"]);
+  const ready = await usersWithUsableBundles(fakePool, ["ready", "stale", "noident", "missing"]);
   assert.ok(ready.has("ready"));
   assert.ok(!ready.has("stale"));
   assert.ok(!ready.has("noident"));
@@ -785,6 +661,6 @@ test("#12: usersWithUsableBundles excludes missing keys and sentinel pq_signatur
   assert.equal(ready.size, 1);
 
   // empty input → no query, empty set
-  const none = await usersWithUsableBundles(fakeSupabase, []);
+  const none = await usersWithUsableBundles(fakePool, []);
   assert.equal(none.size, 0);
 });

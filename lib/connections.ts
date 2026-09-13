@@ -1,4 +1,4 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type pg from "pg";
 
 export type ConnectionStatus = "pending" | "accepted" | "rejected" | "blocked";
 
@@ -65,27 +65,23 @@ export function getOtherUserId(
 }
 
 export async function findConnectionBetweenUsers(
-  client: SupabaseClient,
+  client: pg.Pool | pg.PoolClient,
   userIdA: string,
   userIdB: string
 ): Promise<{ row: ConnectionRow | null; error: Error | null }> {
-  const { data, error } = await client
-    .from("connections")
-    .select(
-      "id, requester_id, addressee_id, status, requester_blocked, addressee_blocked, updated_at"
-    )
-    .or(
-      `and(requester_id.eq.${userIdA},addressee_id.eq.${userIdB}),and(requester_id.eq.${userIdB},addressee_id.eq.${userIdA})`
-    )
-    .limit(1)
-    .maybeSingle();
+  try {
+    const { rows } = await client.query(
+      `SELECT id, requester_id, addressee_id, status, requester_blocked, addressee_blocked, updated_at
+       FROM connections
+       WHERE (requester_id = $1 AND addressee_id = $2)
+          OR (requester_id = $2 AND addressee_id = $1)
+       LIMIT 1`,
+      [userIdA, userIdB]
+    );
 
-  if (error) {
-    return { row: null, error: error as Error };
+    const row = (rows[0] as ConnectionRow | undefined) ?? null;
+    return { row, error: null };
+  } catch (err) {
+    return { row: null, error: err as Error };
   }
-
-  const row = (data as ConnectionRow | null) ?? null;
-
-  return { row, error: null };
 }
-

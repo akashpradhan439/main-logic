@@ -4,10 +4,16 @@
 //   3. Edge: user with h3_cell but minimal profile
 require('dotenv').config({ path: 'C:/Users/akash/onedrive/desktop/main-logic/.env' });
 const jwt = require('jsonwebtoken');
-const { createClient } = require('@supabase/supabase-js');
+const { Pool } = require('pg');
 const { createClient: createRedis } = require('redis');
 
-const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+const pool = new Pool({
+  host: process.env.DB_HOST,
+  port: parseInt(process.env.DB_PORT || '5432'),
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+});
 
 async function clearCache(userId) {
   const r = createRedis({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
@@ -40,17 +46,17 @@ async function callSuggestions(label, user) {
 
 (async () => {
   // === Scenario 1: rich user (most accepted connections) ===
-  const { data: users } = await sb
-    .from('users')
-    .select('id, first_name, h3_cell')
-    .not('h3_cell', 'is', null)
-    .limit(30);
+  const { rows: users } = await pool.query(
+    "SELECT id, first_name, h3_cell FROM users WHERE h3_cell IS NOT NULL LIMIT 30"
+  );
   let bestUser = null; let bestCount = -1;
   for (const u of users || []) {
-    const { count } = await sb
-      .from('connections').select('*', { count: 'exact', head: true })
-      .or(`requester_id.eq.${u.id},addressee_id.eq.${u.id}`).eq('status', 'accepted');
-    if ((count ?? 0) > bestCount) { bestCount = count ?? 0; bestUser = u; }
+    const { rows } = await pool.query(
+      "SELECT COUNT(*)::int as count FROM connections WHERE (requester_id = $1 OR addressee_id = $1) AND status = 'accepted'",
+      [u.id]
+    );
+    const count = rows[0]?.count ?? 0;
+    if (count > bestCount) { bestCount = count; bestUser = u; }
   }
   if (bestUser) {
     await callSuggestions('Scenario 1: rich user (' + bestCount + ' connections)', bestUser);
@@ -61,10 +67,12 @@ async function callSuggestions(label, user) {
   // === Scenario 2: user with 0 connections ===
   let zeroUser = null;
   for (const u of users || []) {
-    const { count } = await sb
-      .from('connections').select('*', { count: 'exact', head: true })
-      .or(`requester_id.eq.${u.id},addressee_id.eq.${u.id}`).eq('status', 'accepted');
-    if ((count ?? 0) === 0) { zeroUser = u; break; }
+    const { rows } = await pool.query(
+      "SELECT COUNT(*)::int as count FROM connections WHERE (requester_id = $1 OR addressee_id = $1) AND status = 'accepted'",
+      [u.id]
+    );
+    const count = rows[0]?.count ?? 0;
+    if (count === 0) { zeroUser = u; break; }
   }
   if (zeroUser) {
     await callSuggestions('Scenario 2: zero connections', zeroUser);
@@ -73,4 +81,5 @@ async function callSuggestions(label, user) {
   }
 
   console.log('\n=== Done ===');
+  await pool.end();
 })().catch(e => { console.error('FATAL:', e); process.exit(1); });

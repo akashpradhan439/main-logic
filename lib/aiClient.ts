@@ -256,7 +256,7 @@ export type AssistantConnectionOptions = {
 /**
  * Optional realtime introspection hook (additive). Lets a UI narrate the
  * assistant's inference as it happens. Steps are mapped onto the same four
- * agent roles used by the swarm so the demo can color them consistently:
+ * agent roles used by the swarm so the logs can color them consistently:
  *   planner   → intent classification
  *   researcher→ connection resolution + live tool calls (places/events)
  *   executor  → reply composition
@@ -784,7 +784,7 @@ export async function chatWithAssistant(
   const systemPrompt = buildAssistantSystemPrompt(userContext);
 
   // Live token streaming for the user-visible reply — only when a caller actually
-  // wants introspection (demo), so production stays on the non-streaming path.
+  // wants introspection, so production stays on the non-streaming path.
   const uiAttached = onStep !== NOOP_STEP;
   const streamToken: ((delta: string) => void) | undefined = uiAttached
     ? (delta) => onStep({ type: "token", delta })

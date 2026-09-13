@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { supabase } from "../lib/supabase.js";
+import pg from "pg";
+import { pool } from "../lib/db.js";
 import { verifyAccessToken, AuthError } from "../shared/auth.js";
 import { redisGet, redisSet } from "../lib/redis.js";
 import { cellToLatLngSafe } from "../shared/h3.js";
@@ -46,7 +47,7 @@ function bucketTimeOfDay(d: Date): MeetupContext["timeOfDay"] {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export type MeetupRouteDeps = {
-  supabase: typeof supabase;
+  pool: pg.Pool;
   verifyAccessToken: typeof verifyAccessToken;
   AuthError: typeof AuthError;
   redisGet: typeof redisGet;
@@ -56,7 +57,7 @@ export type MeetupRouteDeps = {
 
 export function createMeetupRoutes(overrides: Partial<MeetupRouteDeps> = {}) {
   const deps: MeetupRouteDeps = {
-    supabase,
+    pool,
     verifyAccessToken,
     AuthError,
     redisGet,
@@ -66,7 +67,7 @@ export function createMeetupRoutes(overrides: Partial<MeetupRouteDeps> = {}) {
   };
 
   return async function meetupRoutes(app: FastifyInstance) {
-    const { supabase, verifyAccessToken, AuthError, redisGet, redisSet, fetchImpl } = deps;
+    const { pool, verifyAccessToken, AuthError, redisGet, redisSet, fetchImpl } = deps;
 
     // ─── Internal: Context endpoint called by n8n ───────────────────────────
 
@@ -86,14 +87,14 @@ export function createMeetupRoutes(overrides: Partial<MeetupRouteDeps> = {}) {
           throw err;
         }
 
-        const { data: user, error } = await supabase
-          .from("users")
-          .select("h3_cell, bio, interests")
-          .eq("id", userId)
-          .single();
+        const result = await pool.query(
+          'SELECT h3_cell, bio, interests FROM users WHERE id = $1',
+          [userId]
+        );
+        const user = result.rows[0];
 
-        if (error || !user) {
-          log.error({ event: "meetup_context_user_fetch_failure", userId, error }, "Failed to fetch user");
+        if (!user) {
+          log.error({ event: "meetup_context_user_fetch_failure", userId }, "Failed to fetch user");
           return reply
             .status(500)
             .send({ success: false, error: req.t("common.errors.unable_to_process") });
@@ -164,13 +165,13 @@ export function createMeetupRoutes(overrides: Partial<MeetupRouteDeps> = {}) {
         const { type } = parsed.data;
 
         // Pre-check: user must have location set; if not, fail fast (don't bother n8n)
-        const { data: user, error: userErr } = await supabase
-          .from("users")
-          .select("h3_cell")
-          .eq("id", userId)
-          .single();
-        if (userErr || !user) {
-          log.error({ event: "meetup_spots_user_fetch_failure", userId, userErr }, "Failed to fetch user");
+        const userResult = await pool.query(
+          'SELECT h3_cell FROM users WHERE id = $1',
+          [userId]
+        );
+        const user = userResult.rows[0];
+        if (!user) {
+          log.error({ event: "meetup_spots_user_fetch_failure", userId }, "Failed to fetch user");
           return reply
             .status(500)
             .send({ success: false, error: req.t("common.errors.unable_to_process") });

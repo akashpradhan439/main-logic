@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { supabase } from "../lib/supabase.js";
+import { pool } from "../lib/db.js";
 import {
   publishLocationUpdated,
   scheduleLocationUpdatedRetry,
@@ -73,11 +73,31 @@ export default async function locationRoutes(app: FastifyInstance) {
 
       // 3️⃣ Fetch previous location (timed)
       const fetchStart = process.hrtime.bigint();
-      const { data: existingUser, error: fetchError } = await supabase
-        .from("users")
-        .select("h3_cell, h3_neighbors")
-        .eq("id", userId)
-        .single();
+      let existingUser: { h3_cell: string | null; h3_neighbors: string[] | null } | null = null;
+      try {
+        const { rows } = await pool.query(
+          "SELECT h3_cell, h3_neighbors FROM users WHERE id = $1",
+          [userId]
+        );
+        existingUser = rows[0] ?? null;
+      } catch (dbErr) {
+        const fetchDurationMs =
+          Number(process.hrtime.bigint() - fetchStart) / 1_000_000;
+        log.error(
+          {
+            event: "location_update_failure",
+            userId,
+            requestId,
+            durationMs: fetchDurationMs,
+            fetchError: { message: (dbErr as Error).message },
+          },
+          "Failed to fetch user for location update"
+        );
+        return reply.status(500).send({
+          success: false,
+          error: req.t("common.errors.unable_to_process"),
+        });
+      }
       const fetchDurationMs =
         Number(process.hrtime.bigint() - fetchStart) / 1_000_000;
 
@@ -92,28 +112,6 @@ export default async function locationRoutes(app: FastifyInstance) {
           },
           "Slow DB query detected while fetching user location"
         );
-      }
-
-      if (fetchError) {
-        log.error(
-          {
-            event: "location_update_failure",
-            userId,
-            requestId,
-            durationMs: fetchDurationMs,
-            fetchError: {
-              message: fetchError.message,
-              details: fetchError.details,
-              hint: fetchError.hint,
-              code: fetchError.code,
-            },
-          },
-          "Failed to fetch user for location update"
-        );
-        return reply.status(500).send({
-          success: false,
-          error: req.t("common.errors.unable_to_process"),
-        });
       }
 
       const previousCenterHex = (existingUser?.h3_cell as string | null) ?? null;
@@ -138,13 +136,28 @@ export default async function locationRoutes(app: FastifyInstance) {
 
       // 5️⃣ Save to users table (timed)
       const updateStart = process.hrtime.bigint();
-      const { error } = await supabase
-        .from("users")
-        .update({
-          h3_cell: center_hex,
-          h3_neighbors: neighbor_hexes,
-        })
-        .eq("id", userId);
+      try {
+        await pool.query(
+          "UPDATE users SET h3_cell = $1, h3_neighbors = $2 WHERE id = $3",
+          [center_hex, neighbor_hexes, userId]
+        );
+      } catch (dbErr) {
+        const updateDurationMs =
+          Number(process.hrtime.bigint() - updateStart) / 1_000_000;
+        log.error(
+          {
+            event: "location_update_failure",
+            userId,
+            requestId,
+            durationMs: updateDurationMs,
+          },
+          "Failed to update hex location"
+        );
+        return reply.status(500).send({
+          success: false,
+          error: req.t("common.errors.unable_to_process"),
+        });
+      }
       const updateDurationMs =
         Number(process.hrtime.bigint() - updateStart) / 1_000_000;
 
@@ -159,22 +172,6 @@ export default async function locationRoutes(app: FastifyInstance) {
           },
           "Slow DB query detected while updating user location"
         );
-      }
-
-      if (error) {
-        log.error(
-          {
-            event: "location_update_failure",
-            userId,
-            requestId,
-            durationMs: updateDurationMs,
-          },
-          "Failed to update hex location"
-        );
-        return reply.status(500).send({
-          success: false,
-          error: req.t("common.errors.unable_to_process"),
-        });
       }
 
       // 6️⃣ Publish location.updated event if movement >= 1 ring (timed)

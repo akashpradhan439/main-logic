@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
+import pg from "pg";
 import { z } from "zod";
-import { supabase } from "../lib/supabase.js";
+import { pool } from "../lib/db.js";
 import { verifyAccessToken, AuthError } from "../shared/auth.js";
 import { cellToLatLngSafe } from "../shared/h3.js";
 import {
@@ -26,9 +27,6 @@ const ChatSchema = z
     placeId: z.string().min(1).max(120).optional(),
     connectionUserId: z.string().uuid().optional(),
     personUserId: z.string().uuid().optional(),
-    // Sent when the user taps "Plan it" on a meet-up suggestion. connectionId is
-    // the suggestion's connection (a partner user UUID); title/place/time are the
-    // free-text suggestion details used to open the conversation in-context.
     suggestion: z
       .object({
         connectionId: z.string().uuid(),
@@ -41,8 +39,6 @@ const ChatSchema = z
   })
   .strict();
 
-/** Pull the cumulative remembered-connection set from the most recent assistant
- * row's metadata so it carries forward across turns (history is DESC ordered). */
 function seedRememberedConnections(
   historyRows: Array<{ role: string; metadata: Record<string, unknown> | null }>
 ): ConnectionContext[] {
@@ -55,12 +51,6 @@ function seedRememberedConnections(
   return [];
 }
 
-/**
- * Extract every (name, placeId) reference visible in an assistant turn's
- * metadata and append a hidden marker to its content so the LLM can recall
- * placeIds on follow-up turns (e.g. when the user asks "tell me more about
- * Cafe Dori"). The marker is invisible to the client — only the LLM sees it.
- */
 function augmentAssistantContent(
   content: string,
   metadata: Record<string, unknown> | null | undefined
@@ -93,7 +83,7 @@ const HistoryQuerySchema = z.object({
 });
 
 export type AssistantRouteDeps = {
-  supabase: typeof supabase;
+  pool: pg.Pool;
   verifyAccessToken: typeof verifyAccessToken;
   AuthError: typeof AuthError;
   chatWithAssistant: typeof chatWithAssistant;
@@ -102,7 +92,7 @@ export type AssistantRouteDeps = {
 
 export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {}) {
   const deps: AssistantRouteDeps = {
-    supabase,
+    pool,
     verifyAccessToken,
     AuthError,
     chatWithAssistant,
@@ -112,7 +102,7 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
 
   return async function assistantRoutes(app: FastifyInstance) {
     const {
-      supabase,
+      pool: db,
       verifyAccessToken,
       AuthError,
       chatWithAssistant,
@@ -144,22 +134,25 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
         const message = parsed.data.message.trim();
         const tappedPlaceId = parsed.data.placeId;
         const suggestion = parsed.data.suggestion;
-        // A tapped "Plan it" suggestion locks in its connection just like an
-        // explicit connections-chooser tap. Explicit connectionUserId wins if
-        // both are somehow present.
         const chosenConnectionUserId =
           parsed.data.connectionUserId ?? suggestion?.connectionId;
         const chosenPersonUserId = parsed.data.personUserId;
 
-        const { data: me, error: meErr } = await supabase
-          .from("users")
-          .select("first_name, bio, interests, language_preference, h3_cell")
-          .eq("id", userId)
-          .single();
+        const { rows: meRows } = await db.query(
+          "SELECT first_name, bio, interests, language_preference, h3_cell FROM users WHERE id = $1",
+          [userId]
+        );
+        const me = meRows[0] as {
+          first_name: string | null;
+          bio: string | null;
+          interests: string[] | null;
+          language_preference: string | null;
+          h3_cell: string | null;
+        } | undefined;
 
-        if (meErr || !me) {
+        if (!me) {
           log.error(
-            { event: "assistant_user_fetch_failure", userId, meErr },
+            { event: "assistant_user_fetch_failure", userId },
             "Failed to fetch user for assistant chat"
           );
           return reply
@@ -167,34 +160,21 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
             .send({ success: false, error: req.t("common.errors.unable_to_process") });
         }
 
-        const h3Cell = (me.h3_cell as string | null) ?? null;
+        const h3Cell = me.h3_cell;
         const coords = h3Cell ? cellToLatLngSafe(h3Cell) : null;
 
         const userContext: AssistantUserContext = {
-          firstName: (me.first_name as string | null) ?? "there",
-          bio: (me.bio as string | null) ?? null,
-          interests: (me.interests as string[] | null) ?? [],
-          language: (me.language_preference as string | null) ?? "en",
+          firstName: me.first_name ?? "there",
+          bio: me.bio,
+          interests: me.interests ?? [],
+          language: me.language_preference ?? "en",
           coords,
         };
 
-        // Fetch last N messages, DESC, then reverse to ASC for the LLM.
-        // metadata is included so we can re-inject placeIds the model saw in
-        // earlier turns — without it the model can't call get_place_details on
-        // follow-ups like "tell me more about Cafe Dori".
-        const { data: historyRows, error: histErr } = await supabase
-          .from("assistant_messages")
-          .select("role, content, metadata")
-          .eq("user_id", userId)
-          .order("created_at", { ascending: false })
-          .limit(HISTORY_WINDOW_SIZE);
-
-        if (histErr) {
-          log.warn(
-            { event: "assistant_history_fetch_warn", userId, histErr },
-            "Failed to fetch history; continuing with empty context"
-          );
-        }
+        const { rows: historyRows } = await db.query(
+          "SELECT role, content, metadata FROM assistant_messages WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
+          [userId, HISTORY_WINDOW_SIZE]
+        );
 
         const history = (
           (historyRows ?? []) as Array<{
@@ -218,9 +198,6 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
                 : h.content,
           }));
 
-        // If the client passed an explicit placeId (user tapped a card),
-        // resolve the detail server-side, weave it into the LLM context, and
-        // surface a place_detail card unconditionally.
         let tappedPlace: Place | null = null;
         if (tappedPlaceId) {
           tappedPlace = await getPlaceDetails(foursquareApiKey, tappedPlaceId);
@@ -232,8 +209,6 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
           }
         }
 
-        // Seed remembered connections from the latest assistant turn so the
-        // active connection persists across the conversation.
         let seededRemembered = seedRememberedConnections(
           (historyRows ?? []) as Array<{
             role: string;
@@ -241,10 +216,8 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
           }>
         );
 
-        // Chooser-card tap: the client locked in a specific connection. Resolve
-        // it directly and make it the most recently remembered (active) one.
         if (chosenConnectionUserId) {
-          const [chosenConn] = await findAcceptedConnections(supabase, userId, {
+          const [chosenConn] = await findAcceptedConnections(db, userId, {
             userId: chosenConnectionUserId,
           });
           if (chosenConn) {
@@ -255,12 +228,8 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
           }
         }
 
-        // Nearby-people card tap: the user picked someone the assistant surfaced
-        // via "who's around me". Resolve (re-verifying they're genuinely nearby)
-        // and make them the active planning context so the next turn can build a
-        // meetup around them.
         if (chosenPersonUserId) {
-          const chosenPerson = await findNearbyPersonContext(supabase, userId, chosenPersonUserId);
+          const chosenPerson = await findNearbyPersonContext(db, userId, chosenPersonUserId);
           if (chosenPerson) {
             seededRemembered = [
               ...seededRemembered.filter((c) => c.userId !== chosenPerson.userId),
@@ -277,42 +246,28 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
           tappedPlace,
           {
             rememberedConnections: seededRemembered,
-            resolveConnections: (ref) => findAcceptedConnections(supabase, userId, ref),
-            findNearbyPeople: () => findNearbyPeople(supabase, userId),
+            resolveConnections: (ref) => findAcceptedConnections(db, userId, ref),
+            findNearbyPeople: () => findNearbyPeople(db, userId),
             suggestionSeed: suggestion
               ? { title: suggestion.title, place: suggestion.place, time: suggestion.time }
               : undefined,
           }
         );
 
-        // Persist both turns
         let messageId: string | null = null;
         try {
-          const { data: inserted, error: insErr } = await supabase
-            .from("assistant_messages")
-            .insert([
-              { user_id: userId, role: "user", content: message, metadata: {} },
-              {
-                user_id: userId,
-                role: "assistant",
-                content: aiReply,
-                metadata: { cards, rememberedConnections } as {
-                  cards: AssistantCard[];
-                  rememberedConnections: ConnectionContext[];
-                },
-              },
-            ])
-            .select("id, role, created_at")
-            .order("created_at", { ascending: true });
+          const assistantMeta = JSON.stringify({ cards, rememberedConnections });
+          const { rows: inserted } = await db.query(
+            `INSERT INTO assistant_messages (user_id, role, content, metadata)
+             VALUES ($1, 'user', $2, '{}'), ($1, 'assistant', $3, $4)
+             RETURNING id, role, created_at
+             ORDER BY created_at ASC`,
+            [userId, message, aiReply, assistantMeta]
+          );
 
-          if (insErr) {
-            log.error(
-              { event: "assistant_insert_failure", userId, insErr },
-              "Failed to persist assistant chat turn"
-            );
-          } else if (inserted && inserted.length > 0) {
-            const assistantRow = inserted.find((r) => r.role === "assistant");
-            messageId = (assistantRow?.id as string | undefined) ?? null;
+          if (inserted && inserted.length > 0) {
+            const assistantRow = inserted.find((r: { role: string }) => r.role === "assistant");
+            messageId = assistantRow?.id ?? null;
           }
         } catch (err) {
           log.error(
@@ -376,48 +331,40 @@ export function createAssistantRoutes(overrides: Partial<AssistantRouteDeps> = {
 
         let cursorCreatedAt: string | null = null;
         if (cursor) {
-          const { data: cursorRow, error: cursorErr } = await supabase
-            .from("assistant_messages")
-            .select("created_at")
-            .eq("id", cursor)
-            .eq("user_id", userId)
-            .maybeSingle();
+          const { rows: cursorRows } = await db.query(
+            "SELECT created_at FROM assistant_messages WHERE id = $1 AND user_id = $2",
+            [cursor, userId]
+          );
+          const cursorRow = cursorRows[0] as { created_at: string } | undefined;
 
-          if (cursorErr) {
+          if (!cursorRow) {
             log.error(
-              { event: "assistant_history_cursor_failure", userId, cursorErr },
+              { event: "assistant_history_cursor_failure", userId, cursor },
               "Failed to resolve cursor"
             );
             return reply
               .status(500)
               .send({ success: false, error: req.t("common.errors.unable_to_process") });
           }
-          cursorCreatedAt = (cursorRow?.created_at as string | undefined) ?? null;
+          cursorCreatedAt = cursorRow.created_at;
         }
 
-        let query = supabase
-          .from("assistant_messages")
-          .select("id, role, content, metadata, created_at")
-          .eq("user_id", userId)
-          .order("created_at", { ascending: false })
-          .limit(limit + 1);
+        let queryText = "SELECT id, role, content, metadata, created_at FROM assistant_messages WHERE user_id = $1";
+        const queryParams: unknown[] = [userId];
+        let paramIdx = 2;
 
         if (cursorCreatedAt) {
-          query = query.lt("created_at", cursorCreatedAt);
+          queryText += ` AND created_at < $${paramIdx}`;
+          queryParams.push(cursorCreatedAt);
+          paramIdx++;
         }
 
-        const { data: rows, error: rowsErr } = await query;
-        if (rowsErr) {
-          log.error(
-            { event: "assistant_history_fetch_failure", userId, rowsErr },
-            "Failed to fetch assistant history"
-          );
-          return reply
-            .status(500)
-            .send({ success: false, error: req.t("common.errors.unable_to_process") });
-        }
+        queryText += ` ORDER BY created_at DESC LIMIT $${paramIdx}`;
+        queryParams.push(limit + 1);
 
-        const all = (rows ?? []) as Array<{
+        const { rows: rowsResult } = await db.query(queryText, queryParams);
+
+        const all = (rowsResult ?? []) as Array<{
           id: string;
           role: string;
           content: string;

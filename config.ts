@@ -1,7 +1,10 @@
 export const config = {
   jwtSecret: process.env.JWT_SECRET || "dev-secret",
-  supabaseUrl: process.env.SUPABASE_URL || "",
-  supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
+  dbHost: process.env.DB_HOST || "localhost",
+  dbPort: parseInt(process.env.DB_PORT || "5432", 10),
+  dbName: process.env.DB_NAME || "main_logic_db",
+  dbUser: process.env.DB_USER || "root_user",
+  dbPassword: process.env.DB_PASSWORD || "",
   rabbitUrl: process.env.RABBITMQ_URL || process.env.AMQP_URL || "amqp://localhost",
   rabbitExchange: process.env.RABBITMQ_EXCHANGE || "app.events",
   locationUpdatedRoutingKey: "location.updated",

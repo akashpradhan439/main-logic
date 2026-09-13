@@ -17,10 +17,6 @@ class AuthError extends Error {
   }
 }
 
-process.env.SUPABASE_URL = process.env.SUPABASE_URL || "http://localhost";
-process.env.SUPABASE_SERVICE_ROLE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY || "test-key";
-
 // ─── SSE stream parser ────────────────────────────────────────────────────────
 
 type SseEvent = { event: string; data: unknown; id?: string };
@@ -178,12 +174,12 @@ async function buildApp(
     },
     AuthError,
     getMessagesSinceCursor: async function* () {},
-    supabase: {} as any,
+    pool: {} as any,
     ...opts.sseDepsOverrides,
   }));
 
   await app.register(createMessagingRoutes({
-    supabase: {} as any,
+    pool: {} as any,
     verifyAccessToken: () => ({ sub: senderId, phone: "", type: "access" as const, iat: 0, exp: 0 }),
     AuthError,
     findConnectionBetweenUsers: async () => ({ row: null, error: null }),

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
+import pg from "pg";
 import { z } from "zod";
-import { supabase } from "../lib/supabase.js";
+import { pool } from "../lib/db.js";
 import { publishNewMessage } from "../lib/rabbitmq.js";
 import type { MessageEnvelope } from "../shared/types.js";
 import { decodeEnvelope } from "../shared/types.js";
@@ -141,7 +142,7 @@ function normalizeEnvelopeForStorage(envelope: {
 // ─── Dependency Injection ─────────────────────────────────────────────────────
 
 export type MessagingRouteDeps = {
-  supabase: typeof supabase;
+  pool: pg.Pool;
   verifyAccessToken: typeof verifyAccessToken;
   AuthError: typeof AuthError;
   findConnectionBetweenUsers: typeof findConnectionBetweenUsers;
@@ -160,7 +161,7 @@ export function createMessagingRoutes(
   overrides: Partial<MessagingRouteDeps> = {}
 ) {
   const deps: MessagingRouteDeps = {
-    supabase,
+    pool,
     verifyAccessToken,
     AuthError,
     findConnectionBetweenUsers,
@@ -178,7 +179,7 @@ export function createMessagingRoutes(
 
   return async function messagingRoutes(app: FastifyInstance) {
     const {
-      supabase,
+      pool,
       verifyAccessToken,
       AuthError,
       findConnectionBetweenUsers,
@@ -230,7 +231,7 @@ export function createMessagingRoutes(
         );
 
         const { row: connection, error: connError } = await findConnectionBetweenUsers(
-          supabase, userId, otherUserId
+          pool, userId, otherUserId
         );
 
         if (connError) {
@@ -246,7 +247,7 @@ export function createMessagingRoutes(
         }
 
         const { conversation, error, created } = await findOrCreateConversation(
-          supabase, userId, otherUserId, log
+          pool, userId, otherUserId, log
         );
 
         if (error || !conversation) {
@@ -263,7 +264,7 @@ export function createMessagingRoutes(
           "Conversation ready"
         );
 
-        const readySet = await usersWithUsableBundles(supabase, [otherUserId]);
+        const readySet = await usersWithUsableBundles(pool, [otherUserId]);
 
         return reply.status(created ? 201 : 200).send({
           success: true,
@@ -305,46 +306,39 @@ export function createMessagingRoutes(
 
         log.info({ event: "conversations_list_start", userId, requestId }, "Listing conversations");
 
-        const { data, error } = await supabase
-          .from("conversations")
-          .select(`
-            id,
-            participant_one,
-            participant_two,
-            initiator_user_id,
-            created_at,
-            updated_at,
-            p1:users!participant_one(first_name, last_name),
-            p2:users!participant_two(first_name, last_name)
-          `)
-          .or(`participant_one.eq.${userId},participant_two.eq.${userId}`)
-          .order("updated_at", { ascending: false });
+        const { rows: data } = await pool.query(
+          `SELECT c.id, c.participant_one, c.participant_two, c.initiator_user_id, c.created_at, c.updated_at,
+                  p1.first_name as p1_first_name, p1.last_name as p1_last_name,
+                  p2.first_name as p2_first_name, p2.last_name as p2_last_name
+           FROM conversations c
+           LEFT JOIN users p1 ON c.participant_one = p1.id
+           LEFT JOIN users p2 ON c.participant_two = p2.id
+           WHERE c.participant_one = $1 OR c.participant_two = $1
+           ORDER BY c.updated_at DESC`,
+          [userId]
+        );
 
-        if (error) {
-          log.error(
-            { event: "conversations_list_failure", userId, requestId, err: error.message },
-            "Failed to list conversations"
-          );
-          return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
-        }
-
-        const otherUserIds = (data ?? []).map((conv: any) =>
+        const otherUserIds = (data ?? []).map((conv) =>
           conv.participant_one === userId ? conv.participant_two : conv.participant_one
         );
-        const readySet = await usersWithUsableBundles(supabase, otherUserIds);
+        const readySet = await usersWithUsableBundles(pool, otherUserIds);
 
-        const conversations = await Promise.all((data ?? []).map(async (conv: any) => {
+        const conversations = await Promise.all((data ?? []).map(async (conv) => {
           const isP1 = conv.participant_one === userId;
           const otherUserId = isP1 ? conv.participant_two : conv.participant_one;
-          const otherUserProfile = isP1 ? conv.p2 : conv.p1;
+          const otherUserProfile = isP1
+            ? { first_name: conv.p2_first_name, last_name: conv.p2_last_name }
+            : { first_name: conv.p1_first_name, last_name: conv.p1_last_name };
 
-          const { data: lastMsg } = await supabase
-            .from("messages")
-            .select("id, envelope, sender_id, created_at, attachment_url, attachment_type")
-            .eq("conversation_id", conv.id)
-            .order("created_at", { ascending: false })
-            .limit(1)
-            .maybeSingle();
+          const { rows: lastMsgRows } = await pool.query(
+            `SELECT id, envelope, sender_id, created_at, attachment_url, attachment_type
+             FROM messages
+             WHERE conversation_id = $1
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            [conv.id]
+          );
+          const lastMsg = lastMsgRows[0] ?? null;
 
           let decodedEnvelope: MessageEnvelope | null = null;
           if (lastMsg?.envelope) {
@@ -430,7 +424,7 @@ export function createMessagingRoutes(
         }
 
         const { isParticipant, isBlocked, conversation, error: verifyError } = await verifyConversationParticipant(
-          supabase, conversationId, userId
+          pool, conversationId, userId
         );
 
         if (verifyError) {
@@ -454,19 +448,11 @@ export function createMessagingRoutes(
         // user by checking it matches the IK on record, so a sender cannot forge
         // the conversation as if started by someone else.
         if (envelope.bootstrap) {
-          const { data: senderPrekeys, error: ikError } = await (supabase as any)
-            .from("user_prekeys")
-            .select("identity_key_public")
-            .eq("user_id", userId)
-            .maybeSingle();
-
-          if (ikError) {
-            log.error(
-              { event: "send_message_ik_lookup_error", conversationId, userId, requestId, err: ikError.message },
-              "Failed to load sender identity key"
-            );
-            return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });
-          }
+          const { rows: senderPrekeyRows } = await pool.query(
+            `SELECT identity_key_public FROM user_prekeys WHERE user_id = $1 LIMIT 1`,
+            [userId]
+          );
+          const senderPrekeys = senderPrekeyRows[0] ?? null;
 
           if (!senderPrekeys?.identity_key_public || senderPrekeys.identity_key_public !== envelope.bootstrap.senderIdentityKey) {
             log.warn(
@@ -480,7 +466,7 @@ export function createMessagingRoutes(
         const bootstrapJson: BootstrapJson | null = envelope.bootstrap ?? null;
 
         const { message, initiatorUserId, error: insertError } = await insertMessage(
-          supabase,
+          pool,
           conversationId,
           userId,
           normalizedEnvelope,
@@ -623,7 +609,7 @@ export function createMessagingRoutes(
         }
 
         const { isParticipant, isBlocked, conversation, error: verifyError } = await verifyConversationParticipant(
-          supabase, conversationId, userId
+          pool, conversationId, userId
         );
 
         if (verifyError) {
@@ -650,7 +636,7 @@ export function createMessagingRoutes(
         const { cursor, limit } = parsed.data;
 
         const { messages, error } = await getConversationMessages(
-          supabase, conversationId, cursor ?? null, limit
+          pool, conversationId, cursor ?? null, limit
         );
 
         if (error) {
@@ -736,7 +722,7 @@ export function createMessagingRoutes(
         }
 
         const { isParticipant, isBlocked, conversation, error: verifyError } = await verifyConversationParticipant(
-          supabase, conversationId, userId
+          pool, conversationId, userId
         );
 
         if (verifyError) {
@@ -749,7 +735,7 @@ export function createMessagingRoutes(
           return reply.status(403).send({ success: false, error: req.t("messaging.errors.blocked_send") });
         }
 
-        const { bootstrap, senderId, error } = await getConversationBootstrap(supabase, conversationId);
+        const { bootstrap, senderId, error } = await getConversationBootstrap(pool, conversationId);
         if (error) {
           log.error({ event: "bootstrap_fetch_failure", conversationId, userId, requestId, err: error.message }, "Failed to fetch bootstrap");
           return reply.status(500).send({ success: false, error: req.t("common.errors.unable_to_process") });

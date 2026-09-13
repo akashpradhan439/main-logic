@@ -1,7 +1,5 @@
 # Lokaal — A Privacy-First Proximity Network, Planned by an Agent Swarm
 
-> **Microsoft Build AI Hackathon — Agent Swarm category**
-
 Lokaal is a production-grade Fastify/TypeScript backend for a location-based, end-to-end encrypted social platform. Its centerpiece is a **4-agent AI swarm** — Planner → Researcher → Executor → Critic — that plans safe, specific, real-world meetups. Every suggestion is grounded in real connection and venue data, adversarially validated for safety and specificity, supervised by an optional human, and fully traceable.
 
 Single-model AI hands you a confident answer you can't verify, can't audit, and can't trust. Lokaal's swarm refuses to surface a suggestion until four specialized agents agree it's grounded and safe.
@@ -10,7 +8,7 @@ Single-model AI hands you a confident answer you can't verify, can't audit, and 
 
 ## Architecture Diagram
 
-> Rendered natively by GitHub (Mermaid). The same diagram is exported as an image in the slide deck (`deliverables/`).
+> Rendered natively by GitHub (Mermaid).
 
 ```mermaid
 flowchart TD
@@ -34,7 +32,7 @@ flowchart TD
     C -->|APPROVED| F([✅ Final Result + Full Trace])
 
     subgraph INFRA["Infrastructure"]
-        DB[(Supabase / PostgreSQL)]
+        DB[(PostgreSQL)]
         REDIS[(Redis Blackboard<br/>Upstash · rediss://)]
         MQ[RabbitMQ Event Bus]
     end
@@ -64,7 +62,7 @@ flowchart LR
         WM["offline messaging"]
     end
 
-    API --> DB[(Supabase)]
+    API --> DB[(PostgreSQL)]
     API --> REDIS[(Redis)]
     API -->|publish| MQ[RabbitMQ app.events]
     MQ --> WL & WP & WM
@@ -154,7 +152,7 @@ All swarm endpoints require `Authorization: Bearer <JWT>`.
 ### Prerequisites
 - **Docker** + Docker Compose (recommended path — runs the whole stack)
 - Or: **Node.js 20+** for local dev
-- A **Supabase** project and a **Redis** instance (managed `rediss://` works)
+- A **PostgreSQL** database and a **Redis** instance (managed `rediss://` works)
 - An **Azure AI Foundry** deployment (Llama-3.3-70B-Instruct or compatible)
 - API keys: Foursquare (venues); optional APNs (push), n8n (automation)
 
@@ -206,7 +204,6 @@ docker compose -f docker-compose.prod.yml logs -f --tail=0 api | grep --line-buf
 ```
 ├── agents.md              ← Swarm Constitution (Rules of Engagement)
 ├── .env.example           ← Environment template (no secrets)
-├── deliverables/          ← Hackathon submission bundle
 ├── lib/
 │   ├── agentSwarm.ts      ← 4-agent swarm (Planner, Researcher, Executor, Critic)
 │   ├── azureClient.ts     ← Azure AI Foundry client
@@ -234,7 +231,7 @@ docker compose -f docker-compose.prod.yml logs -f --tail=0 api | grep --line-buf
 | LLM | **Azure AI Foundry — Llama-3.3-70B-Instruct** (Azure-only) |
 | State / Blackboard | Managed Redis (Upstash `rediss://`) |
 | Safety | Azure AI Content Safety (Critic gate) |
-| Database | Supabase / PostgreSQL |
+| Database | PostgreSQL |
 | Cryptography | Noble.js — X25519, Ed25519, ML-KEM-768, AES-256-GCM |
 | Messaging | RabbitMQ topic exchange · Server-Sent Events |
 | Location / Venues | Uber H3 spatial indexing · Foursquare Places API |
@@ -242,12 +239,4 @@ docker compose -f docker-compose.prod.yml logs -f --tail=0 api | grep --line-buf
 
 ---
 
-## Team Roles
 
-This project was built **solo**.
-
-| Member | Role | Responsibilities |
-|---|---|---|
-| **Akash** ([@akashpradhan439](https://github.com/akashpradhan439)) | Founder & Full-Stack Engineer | End-to-end ownership: agent swarm design & orchestration (`agentSwarm.ts`), Azure AI Foundry integration, connection-aware planning, E2EE messaging, location/proximity engine, infrastructure (Docker, RabbitMQ, n8n), and all submission deliverables. |
-
-> _Solo build — a single engineer shipped the full production-grade, containerized multi-agent system._

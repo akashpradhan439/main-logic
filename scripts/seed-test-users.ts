@@ -14,17 +14,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import { randomUUID } from "crypto";
-import { createClient } from "@supabase/supabase-js";
-
-const SUPABASE_URL = process.env.SUPABASE_URL || "";
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env");
-  process.exit(1);
-}
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+import { pool } from "../lib/db.js";
 
 // ─── Seed data pools ─────────────────────────────────────────────────────────
 
@@ -207,8 +197,8 @@ function generateConnections(users: SeedUser[]): ConnectionRow[] {
     while (accepted < targetAcceptedPerUser && attempts < 40) {
       attempts++;
       const useSame = Math.random() < 0.7;
-      const pool = useSame ? sameCluster : users;
-      const partner = pool[rand(pool.length)];
+      const samePool = useSame ? sameCluster : users;
+      const partner = samePool[rand(samePool.length)];
       if (tryAdd(user, partner, "accepted")) accepted++;
     }
 
@@ -261,15 +251,85 @@ function generateNotifications(users: SeedUser[]): NotificationRow[] {
 
 // ─── Insertion (batched) ─────────────────────────────────────────────────────
 
-async function insertInBatches<T>(table: string, rows: T[], batchSize = 50) {
-  for (let i = 0; i < rows.length; i += batchSize) {
-    const batch = rows.slice(i, i + batchSize);
-    const { error } = await supabase.from(table).insert(batch as any);
-    if (error) {
-      console.error(`Failed to insert into ${table} (batch starting ${i}):`, error);
-      throw error;
+const INSERT_BATCH_SIZE = 50;
+
+async function insertUsers(users: SeedUser[]) {
+  const cols = [
+    "id", "country_code", "phone_number", "password_hash", "dob",
+    "first_name", "last_name", "bio", "interests", "h3_cell", "h3_neighbors",
+  ];
+
+  for (let i = 0; i < users.length; i += INSERT_BATCH_SIZE) {
+    const batch = users.slice(i, i + INSERT_BATCH_SIZE);
+    const values: string[] = [];
+    const params: any[] = [];
+    let paramIdx = 1;
+
+    for (const u of batch) {
+      const placeholders = cols.map(() => `$${paramIdx++}`).join(", ");
+      values.push(`(${placeholders})`);
+      params.push(
+        u.id,
+        u.country_code,
+        u.phone_number,
+        u.password_hash,
+        u.dob,
+        u.first_name,
+        u.last_name,
+        u.bio,
+        u.interests,
+        u.h3_cell,
+        u.h3_neighbors,
+      );
     }
-    console.log(`  inserted ${Math.min(i + batchSize, rows.length)}/${rows.length} into ${table}`);
+
+    const sql = `INSERT INTO users (${cols.join(", ")}) VALUES ${values.join(", ")}`;
+    await pool.query(sql, params);
+    console.log(`  inserted ${Math.min(i + INSERT_BATCH_SIZE, users.length)}/${users.length} into users`);
+  }
+}
+
+async function insertConnections(connections: ConnectionRow[]) {
+  const cols = ["requester_id", "addressee_id", "status"];
+  const batchSize = 100;
+
+  for (let i = 0; i < connections.length; i += batchSize) {
+    const batch = connections.slice(i, i + batchSize);
+    const values: string[] = [];
+    const params: any[] = [];
+    let paramIdx = 1;
+
+    for (const c of batch) {
+      const placeholders = cols.map(() => `$${paramIdx++}`).join(", ");
+      values.push(`(${placeholders})`);
+      params.push(c.requester_id, c.addressee_id, c.status);
+    }
+
+    const sql = `INSERT INTO connections (${cols.join(", ")}) VALUES ${values.join(", ")}`;
+    await pool.query(sql, params);
+    console.log(`  inserted ${Math.min(i + batchSize, connections.length)}/${connections.length} into connections`);
+  }
+}
+
+async function insertNotifications(notifications: NotificationRow[]) {
+  const cols = ["user_a_id", "user_b_id", "initiator_id", "overlap_hex", "notification_type"];
+  const batchSize = 100;
+
+  for (let i = 0; i < notifications.length; i += batchSize) {
+    const batch = notifications.slice(i, i + batchSize);
+    const values: string[] = [];
+    const params: any[] = [];
+    let paramIdx = 1;
+
+    for (const n of batch) {
+      const placeholders = cols.map(() => `$${paramIdx++}`).join(", ");
+      values.push(`(${placeholders})`);
+      params.push(n.user_a_id, n.user_b_id, n.initiator_id, n.overlap_hex, n.notification_type);
+    }
+
+    const sql = `INSERT INTO notifications (${cols.join(", ")}) VALUES ${values.join(", ")}`;
+    await pool.query(sql, params);
+    console.log(`  inserted ${Math.min(i + batchSize, notifications.length)}/${notifications.length} into notifications`);
   }
 }
 
@@ -286,19 +346,21 @@ async function main() {
   console.log(`Notifications: ${notifications.length}`);
 
   console.log("\nInserting users...");
-  await insertInBatches("users", users, 50);
+  await insertUsers(users);
 
   console.log("\nInserting connections...");
-  await insertInBatches("connections", connections, 100);
+  await insertConnections(connections);
 
   console.log("\nInserting notifications...");
-  await insertInBatches("notifications", notifications, 100);
+  await insertNotifications(notifications);
 
   console.log("\n✓ Seed complete.");
   console.log("\nSample user IDs (first 5):");
   for (const u of users.slice(0, 5)) {
     console.log(`  ${u.id}  ${u.first_name} ${u.last_name}  [${u.h3_cell}]`);
   }
+
+  await pool.end();
 }
 
 main().catch((err) => {

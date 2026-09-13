@@ -5,10 +5,6 @@ import type { MessagingRouteDeps } from "../routes/messaging.js";
 import type { ConversationRow, MessageRow } from "../lib/messaging.js";
 import type { ConnectionRow } from "../lib/connections.js";
 
-process.env.SUPABASE_URL = process.env.SUPABASE_URL || "http://localhost";
-process.env.SUPABASE_SERVICE_ROLE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY || "test-key";
-
 // ─── Scenario State ───────────────────────────────────────────────────────────
 
 const scenario: {
@@ -71,109 +67,31 @@ class AuthError extends Error {
   }
 }
 
-const supabaseStub = {
-  from(table: string) {
-    if (table === "conversations") {
-      return {
-        select(query?: string) {
-          return {
-            or() {
-              return {
-                async order() {
-                  return { data: scenario.conversations, error: scenario.conversationsError };
-                },
-              };
-            },
-            eq() {
-              return {
-                eq() {
-                  return {
-                    async maybeSingle() {
-                      return { data: scenario.conversations[0] || null, error: scenario.conversationsError };
-                    },
-                  };
-                },
-                async single() {
-                  return { data: scenario.conversations[0] || null, error: scenario.conversationsError };
-                },
-              };
-            },
-            async single() {
-              return { data: scenario.conversations[0] || null, error: scenario.conversationsError };
-            },
-          };
-        },
-        async update() {
-          return { error: null };
-        },
-        async insert() {
-          return {
-            select() {
-              return {
-                async single() {
-                  return { data: scenario.conversations[0] || null, error: null };
-                },
-              };
-            },
-          };
-        },
-      };
+const poolStub = {
+  async query(sql: string, params?: unknown[]) {
+    const sqlLower = sql.trim().toLowerCase();
+
+    if (sqlLower.includes("from conversations c") && sqlLower.includes("left join users")) {
+      const rows = scenario.conversations.map((conv) => ({
+        ...conv,
+        p1_first_name: "John",
+        p1_last_name: "Doe",
+        p2_first_name: "Jane",
+        p2_last_name: "Smith",
+      }));
+      return { rows, rowCount: rows.length };
     }
-    if (table === "messages") {
-      return {
-        insert() {
-          return {
-            select() {
-              return {
-                async single() {
-                  return { data: makeMessage(), error: null };
-                },
-              };
-            },
-          };
-        },
-        select() {
-          return {
-            eq() {
-              return {
-                order() {
-                  return {
-                    limit() {
-                      return {
-                        async maybeSingle() {
-                          return { data: scenario.messagesResult.messages[0] || null, error: scenario.messagesResult.error };
-                        },
-                      };
-                    },
-                  };
-                },
-              };
-            },
-          };
-        },
-      };
+
+    if (sqlLower.includes("from messages") && sqlLower.includes("order by created_at desc") && sqlLower.includes("limit 1")) {
+      return { rows: scenario.messagesResult.messages.length > 0 ? [scenario.messagesResult.messages[0]] : [], rowCount: 1 };
     }
-    if (table === "users") {
-      return {
-        select() {
-          return {
-            eq() {
-              return {
-                async single() {
-                  return { data: { id: scenario.otherUserId }, error: null };
-                },
-              };
-            },
-          };
-        },
-      };
-    }
-    throw new Error(`Unexpected table: ${table}`);
+
+    return { rows: [], rowCount: 0 };
   },
 };
 
 const deps: Partial<MessagingRouteDeps> = {
-  supabase: supabaseStub as unknown as MessagingRouteDeps["supabase"],
+  pool: poolStub as unknown as MessagingRouteDeps["pool"],
   verifyAccessToken: () => ({
     sub: scenario.userId,
     phone: "",

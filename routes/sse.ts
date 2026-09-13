@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import { supabase } from "../lib/supabase.js";
+import pg from "pg";
+import { pool } from "../lib/db.js";
 import { verifyAccessToken, AuthError } from "../shared/auth.js";
 import { registerConnection, removeConnection, type BufferItem } from "../lib/sseManager.js";
 import { getMessagesSinceCursor } from "../lib/messaging.js";
@@ -8,14 +9,14 @@ export type SseRouteDeps = {
   verifyAccessToken: typeof verifyAccessToken;
   AuthError: typeof AuthError;
   getMessagesSinceCursor: typeof getMessagesSinceCursor;
-  supabase: typeof supabase;
+  pool: pg.Pool;
 };
 
 export function createSseRoutes(overrides: Partial<SseRouteDeps> = {}) {
-  const deps: SseRouteDeps = { verifyAccessToken, AuthError, getMessagesSinceCursor, supabase, ...overrides };
+  const deps: SseRouteDeps = { verifyAccessToken, AuthError, getMessagesSinceCursor, pool, ...overrides };
 
   return async function sseRoutes(app: FastifyInstance) {
-    const { verifyAccessToken, AuthError, getMessagesSinceCursor, supabase } = deps;
+    const { verifyAccessToken, AuthError, getMessagesSinceCursor, pool } = deps;
 
     app.get("/messaging/stream", async (req, reply) => {
       let userId: string;
@@ -76,7 +77,7 @@ export function createSseRoutes(overrides: Partial<SseRouteDeps> = {}) {
 
       if (cursor) {
         try {
-          const generator = getMessagesSinceCursor(supabase, userId, cursor);
+          const generator = getMessagesSinceCursor(pool, userId, cursor);
           for await (const batch of generator) {
             if (reply.raw.writableEnded || reply.raw.destroyed) break;
             for (const msg of batch) {
