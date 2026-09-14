@@ -3,8 +3,7 @@ WORKDIR /app
 
 # Copy package.json and package-lock.json
 COPY package*.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci
+RUN npm ci && npm cache clean --force
 
 # Copy the rest of the application
 COPY . .
@@ -20,8 +19,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install only production dependencies
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci --omit=dev
+RUN npm ci --omit=dev && npm cache clean --force
 
 # Copy built dist folder from builder stage
 COPY --from=builder /app/dist ./dist
