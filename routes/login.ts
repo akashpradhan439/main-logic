@@ -52,7 +52,7 @@ export default async function loginRoutes(app: FastifyInstance) {
         error: parsed.error.flatten().fieldErrors,
       });
     }
-// just for testing 
+// just for  
     const { country_code, phone_number, password, force_login, force_login_token } = parsed.data;
 
     try {
