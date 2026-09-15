@@ -299,7 +299,7 @@ export async function* getMessagesSinceCursor(
 
   let lastCursor = cursor;
   while (true) {
-    const { rows: data, error } = await client.query(
+    const result = await client.query(
       `SELECT ${MESSAGE_COLS}
        FROM messages
        WHERE conversation_id = ANY($1)
@@ -307,7 +307,8 @@ export async function* getMessagesSinceCursor(
        ORDER BY created_at DESC
        LIMIT $3`,
       [conversationIds, lastCursor, batchSize]
-    ).then(r => r).catch(e => ({ rows: [] as any[], error: e as Error }));
+    ).then(r => ({ rows: r.rows, error: undefined as Error | undefined })).catch(e => ({ rows: [] as any[], error: e as Error }));
+    const { rows: data, error } = result;
 
     if ((error as Error | undefined) || !data || data.length === 0) break;
 

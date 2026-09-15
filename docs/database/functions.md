@@ -1,6 +1,6 @@
 # Stored Functions
 
-All functions live in the `public` schema and are callable via Supabase RPC (`supabase.rpc(...)`).
+All functions live in the `public` schema and are callable via PostgreSQL RPC.
 
 ---
 

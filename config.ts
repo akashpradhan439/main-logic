@@ -35,4 +35,5 @@ export const config = {
   passwordPepper: process.env.PASSWORD_PEPPER || "default_pepper_if_not_set",
   twilioAccountSid: process.env.TWILIO_ACCOUNT_SID || "",
   twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || "",
+  twilioVerifyServiceSid: process.env.TWILIO_VERIFY_SERVICE_SID || "",
 };

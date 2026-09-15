@@ -52,7 +52,7 @@ export function createSwarmRoutes(overrides: Partial<SwarmRouteDeps> = {}) {
 
         log.info({ event: "swarm_meetup_start", userId }, "Starting meetup swarm");
 
-        const state = await runSwarm({ userId, taskType: "meetup", pool, foursquareApiKey });
+        const state = await runSwarm({ userId, taskType: "meetup", db: pool, foursquareApiKey });
 
         log.info(
           { event: "swarm_meetup_done", userId, runId: state.runId, phase: state.phase, attempts: state.attempts, provider: state.llmProvider },
@@ -96,7 +96,7 @@ export function createSwarmRoutes(overrides: Partial<SwarmRouteDeps> = {}) {
 
         log.info({ event: "swarm_connections_start", userId }, "Starting connections swarm");
 
-        const state = await runSwarm({ userId, taskType: "connections", pool, foursquareApiKey });
+        const state = await runSwarm({ userId, taskType: "connections", db: pool, foursquareApiKey });
 
         log.info(
           { event: "swarm_connections_done", userId, runId: state.runId, phase: state.phase, attempts: state.attempts },
@@ -204,7 +204,7 @@ export function createSwarmRoutes(overrides: Partial<SwarmRouteDeps> = {}) {
           runId,
           approved: parsed.data.approved,
           ...(parsed.data.feedback !== undefined ? { feedback: parsed.data.feedback } : {}),
-          pool,
+          db: pool,
           foursquareApiKey,
         });
 

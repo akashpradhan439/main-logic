@@ -121,7 +121,7 @@ const deps: Partial<MessagingRouteDeps> = {
     scenario.publishCalled = true;
     return scenario.publishResult;
   },
-  usersWithUsableBundles: async (_supabase: any, userIds: string[]) =>
+  usersWithUsableBundles: async (_db: any, userIds: string[]) =>
     new Set(scenario.readyUserIds.filter((id) => userIds.includes(id))),
 };
 

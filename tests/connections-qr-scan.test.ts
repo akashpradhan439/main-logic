@@ -68,7 +68,7 @@ const poolStub = {
       const cols = sql.match(/SET\s+(.*?)\s+WHERE/si)?.[1] || "";
       const setParts = cols.split(",").map((s) => s.trim());
       for (const part of setParts) {
-        const col = part.split("=")[0].trim();
+        const col = part.split("=")[0]?.trim() ?? "";
         const paramIdx = part.match(/\$(\d+)/)?.[1];
         if (paramIdx && params) {
           scenario.updatePayload[col] = params[parseInt(paramIdx) - 1];

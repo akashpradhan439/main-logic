@@ -225,7 +225,7 @@ export type AssistantCard =
   | { type: "people"; data: NearbyPerson[] };
 
 /** A function the route injects to resolve a mentioned connection (bound to
- * supabase + the requesting user id). Keeps aiClient free of Supabase. */
+ * the database pool + the requesting user id). */
 export type ConnectionResolver = (ref: {
   name?: string | null;
   userId?: string | null;
@@ -246,7 +246,7 @@ export type AssistantConnectionOptions = {
   /** Resolver for connections newly named in this turn. */
   resolveConnections?: ConnectionResolver;
   /** Discover up to 10 people around the user with shared interests (bound to
-   * supabase + the requesting user id). Keeps aiClient free of Supabase. */
+   * the database pool + the requesting user id). */
   findNearbyPeople?: () => Promise<NearbyPerson[]>;
   /** When the user tapped "Plan it" on a meet-up suggestion, its details so the
    * assistant can open the conversation grounded in that specific idea. */

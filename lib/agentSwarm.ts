@@ -692,7 +692,7 @@ Return ONLY valid JSON: {"approved":true/false,"feedback":"brief explanation","i
 export type SwarmParams = {
   userId: string;
   taskType: TaskType;
-  supabase?: pg.Pool;
+  db?: pg.Pool;
   foursquareApiKey: string;
   /** Optional realtime hooks: stream events and/or abort the run. */
   hooks?: SwarmHooks;
@@ -701,7 +701,7 @@ export type SwarmParams = {
 };
 
 export async function runSwarm(params: SwarmParams): Promise<SwarmState> {
-  const { userId, taskType, supabase = pool, foursquareApiKey, hooks, targetConnectionId } = params;
+  const { userId, taskType, db = pool, foursquareApiKey, hooks, targetConnectionId } = params;
   const runId = randomUUID();
 
   const emit: SwarmEmit = hooks?.emit ?? (() => {});
@@ -751,7 +751,7 @@ export async function runSwarm(params: SwarmParams): Promise<SwarmState> {
     // 1. Planner
     checkAbort();
     emit({ type: "agent_start", agent: "planner", phase: "planning" });
-    const { rows: previewRows } = await supabase.query(
+    const { rows: previewRows } = await db.query(
       "SELECT first_name, bio, interests FROM users WHERE id = $1",
       [userId]
     );
@@ -769,7 +769,7 @@ export async function runSwarm(params: SwarmParams): Promise<SwarmState> {
     // 2. Researcher
     checkAbort();
     emit({ type: "agent_start", agent: "researcher", phase: "research" });
-    await researcherAgent(state, supabase, foursquareApiKey);
+    await researcherAgent(state, db, foursquareApiKey);
     await saveState(state);
     emit({ type: "phase", phase: state.phase });
     flushTraces();
@@ -847,10 +847,10 @@ export async function resumeSwarm(params: {
   runId: string;
   approved: boolean;
   feedback?: string;
-  supabase?: pg.Pool;
+  db?: pg.Pool;
   foursquareApiKey: string;
 }): Promise<SwarmState> {
-  const { runId, approved, feedback, supabase = pool, foursquareApiKey } = params;
+  const { runId, approved, feedback, db = pool, foursquareApiKey } = params;
 
   const state = await loadSwarmState(runId);
   if (!state) throw new Error("Swarm run not found or expired");
@@ -878,7 +878,7 @@ export async function resumeSwarm(params: {
 
   // Re-fetch foursquare if needed (unused here but kept for future expansion)
   void foursquareApiKey;
-  void supabase;
+  void db;
 
   return state;
 }
