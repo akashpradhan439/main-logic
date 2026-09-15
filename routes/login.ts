@@ -153,8 +153,9 @@ export default async function loginRoutes(app: FastifyInstance) {
     }
   });
 
-  app.post("/get-countries", async (req: FastifyRequest, reply: FastifyReply) => {
-    const parsed = GetCountriesSchema.safeParse(req.body);
+  const getCountriesHandler = async (req: FastifyRequest, reply: FastifyReply) => {
+    const input = req.method === "GET" ? req.query : (req.body || {});
+    const parsed = GetCountriesSchema.safeParse(input);
     if (!parsed.success) {
       return reply.status(400).send({ error: parsed.error.flatten().fieldErrors });
     }
@@ -193,5 +194,9 @@ export default async function loginRoutes(app: FastifyInstance) {
       req.log.error({ err: error }, "get-countries error");
       return reply.status(400).send({ success: false, error: (error as Error).message });
     }
-  });
+  };
+
+  app.get("/get-countries", getCountriesHandler);
+  app.get("/countries", getCountriesHandler);
+  app.post("/get-countries", getCountriesHandler);
 }
