@@ -33,7 +33,7 @@ function generateTokens(userId: string, countryCode: string, phoneNumber: string
 
 const LoginSchema = z.object({
   country_code: z.string().min(1),
-  phone_number: z.number(),
+  phone_number: z.number().min(1),
   password: z.string().min(1),
   force_login: z.boolean().optional(),
   force_login_token: z.string().optional(),
