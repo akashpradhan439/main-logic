@@ -304,7 +304,7 @@ export async function* getMessagesSinceCursor(
        FROM messages
        WHERE conversation_id = ANY($1)
          AND created_at > $2
-       ORDER BY created_at DESC
+       ORDER BY created_at ASC
        LIMIT $3`,
       [conversationIds, lastCursor, batchSize]
     ).then(r => ({ rows: r.rows, error: undefined as Error | undefined })).catch(e => ({ rows: [] as any[], error: e as Error }));
