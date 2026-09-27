@@ -8,3 +8,4 @@ utf8_err.log
 docker-compose*.yml
 deploy/
 tests/
+certbot/
