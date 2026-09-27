@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package svr;
+
+message BackupPayload {
+  // Signal identity keys (private halves)
+  bytes identity_key_private       = 1;  // Ed25519 64-byte secret key
+  bytes identity_signing_key_private = 2;
+  
+  // Current signed prekeys (private halves)
+  bytes signed_prekey_private      = 3;
+  uint32 signed_prekey_id          = 4;
+  bytes pq_signed_prekey_private   = 5;  // ML-KEM-768 decapsulation key
+  uint32 pq_signed_prekey_id       = 6;
+  
+  // Double Ratchet session states (one per conversation)
+  repeated SessionState sessions   = 7;
+  
+  // Metadata
+  uint32 version                   = 8;
+  uint64 created_at_ms             = 9;
+}
+
+message SessionState {
+  string conversation_id           = 1;
+  string peer_user_id              = 2;
+  
+  // Double Ratchet core state
+  bytes  root_key                  = 3;
+  bytes  chain_key_send            = 4;
+  bytes  chain_key_recv            = 5;
+  bytes  dh_send_private           = 6;
+  bytes  dh_send_public            = 7;
+  bytes  dh_recv_public            = 8;
+  uint32 send_n                    = 9;
+  uint32 recv_n                    = 10;
+  uint32 prev_send_n               = 11;
+  
+  // Skipped message keys
+  repeated SkippedKey skipped_keys = 12;
+}
+
+message SkippedKey {
+  bytes  dh_public                 = 1;
+  uint32 n                         = 2;
+  bytes  message_key               = 3;
+  uint64 added_at_ms               = 4;  // for time-based expiry (H3)
+}

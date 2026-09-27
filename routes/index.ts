@@ -15,6 +15,7 @@ import swarmRoutes from "./swarm.js";
 import loginRoutes from "./login.js";
 import authRoutes from "./auth.js";
 import otpRoutes from "./otp.js";
+import svrRoutes from "./svr.js";
 
 export default async function registerRoutes(app: FastifyInstance) {
   app.register(healthRoutes);
@@ -33,4 +34,5 @@ export default async function registerRoutes(app: FastifyInstance) {
   app.register(meetupSuggestionsRoutes);
   app.register(assistantRoutes);
   app.register(swarmRoutes);
+  app.register(svrRoutes);
 }

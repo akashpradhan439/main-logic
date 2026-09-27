@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "build": "rimraf dist && tsc && node -e \"const fs=require('fs'); const d='dist/shared'; if(!fs.existsSync(d))fs.mkdirSync(d,{recursive:true}); fs.copyFileSync('shared/envelope.proto',d+'/envelope.proto');\"",
+    "build": "rimraf dist && tsc && node -e \"const fs=require('fs'); const d='dist/shared'; if(!fs.existsSync(d))fs.mkdirSync(d,{recursive:true}); fs.copyFileSync('shared/envelope.proto',d+'/envelope.proto'); fs.copyFileSync('shared/svr_backup.proto',d+'/svr_backup.proto');\"",
     "dev": "tsx index.ts",
     "start": "node dist/index.js",
     "worker:location": "tsx workers/locationUpdatedWorker.ts",
@@ -19,6 +19,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@cloudflare/voprf-ts": "^1.0.0",
     "@fastify/cors": "^11.2.0",
     "@fastify/helmet": "^13.0.2",
     "@noble/ciphers": "^2.1.1",

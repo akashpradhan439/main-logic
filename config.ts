@@ -36,4 +36,7 @@ export const config = {
   twilioAccountSid: process.env.TWILIO_ACCOUNT_SID || "",
   twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || "",
   twilioVerifyServiceSid: process.env.TWILIO_VERIFY_SERVICE_SID || "",
+  svrMaxGuesses: parseInt(process.env.SVR_MAX_GUESSES || "10", 10),
+  svrMaxBlobSize: parseInt(process.env.SVR_MAX_BLOB_SIZE || "1048576", 10),
+  svrEnabled: process.env.SVR_ENABLED !== "false",
 };

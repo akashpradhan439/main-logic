@@ -6,6 +6,7 @@ import { z } from "zod";
 import { pool } from "../lib/db.js";
 import { redisGet, redisSet, redisDel } from "../lib/redis.js";
 import { config } from "../config.js";
+import { getSvrBackup } from "../lib/svr.js";
 
 const PEPPER = process.env.PASSWORD_PEPPER || "default_pepper_if_not_set";
 const ACCESS_TOKEN_EXPIRY = 10 * 60; // 10 minutes (seconds)
@@ -137,6 +138,10 @@ export default async function loginRoutes(app: FastifyInstance) {
       await redisSet(sessionKey, refreshTokenHash, REFRESH_TOKEN_EXPIRY);
       await redisDel(failedKey);
 
+      // 6. Check SVR backup
+      const svrBackup = await getSvrBackup(pool, user.id);
+      const hasBackup = !!svrBackup && svrBackup.encryptedBlob.length > 0;
+
       return reply.status(200).send({
         access_token: accessToken,
         refresh_token: refreshToken,
@@ -146,6 +151,8 @@ export default async function loginRoutes(app: FastifyInstance) {
           phone: `${user.country_code}${user.phone_number}`,
           language_preference: user.language_preference,
         },
+        has_svr_backup: hasBackup,
+        svr_backup_version: hasBackup ? svrBackup!.version : null,
       });
     } catch (error) {
       req.log.error({ err: error }, "Login error");
