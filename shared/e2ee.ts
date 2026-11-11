@@ -370,6 +370,9 @@ export class DoubleRatchet {
   private _encrypt(plaintext: Uint8Array, ad?: Uint8Array): MessageEnvelope {
     this.evictExpiredSkippedKeys();
 
+    if (!this.state.CKs) {
+      throw new Error("Cannot encrypt before receiving the first message");
+    }
     const [ck_next, mk] = KDF_CK(this.state.CKs!);
     const header: MessageHeader = {
       dhPublicKey: this.state.DHs.publicKey,
@@ -408,6 +411,12 @@ export class DoubleRatchet {
     }
 
     // 2. Perform DH Ratchet if necessary
+    if (this.state.DHr !== null && equals(envelope.header.dhPublicKey, this.state.DHr)) {
+      if (envelope.header.n < this.state.Nr) {
+         throw new Error("Message is replayed or expired");
+      }
+    }
+
     if (this.state.DHr === null || !equals(envelope.header.dhPublicKey, this.state.DHr)) {
       this.skipMessageKeys(envelope.header.pn);
       this.dhRatchet(envelope.header.dhPublicKey);
@@ -443,10 +452,13 @@ export class DoubleRatchet {
   }
 
   private skipMessageKeys(until: number) {
-    if (this.state.Nr + MAX_SKIP < until) {
-      throw new Error("Too many skipped messages");
-    }
     if (this.state.CKr !== null) {
+      if (this.state.Nr + MAX_SKIP < until) {
+        throw new Error("Too many skipped messages");
+      }
+      if (this.state.Nr > until) {
+         throw new Error("Message is from an old chain and not found in skipped keys (replayed or expired)");
+      }
       while (this.state.Nr < until) {
         const [ck_next, mk] = KDF_CK(this.state.CKr);
         this.state.CKr = ck_next;
